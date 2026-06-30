@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HAM — Privacy &amp; data</title>
+<style>
+  :root {
+    --bg: #05070d;
+    --panel: rgba(14, 20, 34, 0.82);
+    --panel-border: rgba(90, 130, 200, 0.25);
+    --accent: #4fd1ff;
+    --accent-dim: #2b8db8;
+    --text: #e6edf6;
+    --muted: #8aa0bd;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6; padding: 32px 20px;
+  }
+  main {
+    max-width: 720px; margin: 0 auto;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 14px; padding: 28px 30px; backdrop-filter: blur(12px);
+  }
+  a { color: var(--accent); }
+  h1 { font-size: 24px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+  h2 { font-size: 16px; margin: 26px 0 8px; color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  p, li { font-size: 14px; }
+  ul { padding-left: 20px; }
+  code { background: rgba(5,9,18,0.7); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+  .back { display: inline-block; margin-bottom: 18px; font-size: 14px; }
+  .note { color: var(--muted); font-size: 13px; }
+  button.clear {
+    margin-top: 12px; padding: 10px 16px; border-radius: 9px; cursor: pointer; font-size: 14px;
+    background: rgba(255,128,128,0.15); border: 1px solid rgba(255,128,128,0.4); color: #ff9a9a;
+  }
+  button.clear:hover { background: rgba(255,128,128,0.25); }
+  #cleared { color: var(--accent); font-size: 13px; margin-left: 10px; display: none; }
+</style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/">← Back to HAM</a>
+    <h1>🛰 Privacy &amp; data</h1>
+    <div class="sub">How HAM handles your data · last updated 28 June 2026</div>
+
+    <p>HAM is a satellite tracker. It runs almost entirely in your browser. There
+       are <strong>no analytics, no advertising, and no third-party tracking</strong>.
+       This page explains the little data it does use.</p>
+
+    <h2>What's stored on your device</h2>
+    <p>HAM uses your browser's <strong>local storage</strong> (similar to cookies, but
+       it never leaves your browser and is never sent to our server):</p>
+    <ul>
+      <li><strong>Orbit cache</strong> (<code>tle:&lt;id&gt;</code>) — orbital elements for
+          satellites you view, kept for ~12&nbsp;hours. This is <em>strictly necessary</em>:
+          it lets the app animate satellites without repeatedly calling the rate-limited
+          orbit API, so it is always on.</li>
+      <li><strong>Your preferences</strong> (<code>ham:settings</code>) — the filters and
+          view options you choose (hidden constellations, category, sky radius, camera-lock
+          and orbit/ground-track toggles, and your reminder lead time). <em>Stored only if
+          you click “Accept”.</em></li>
+      <li><strong>Your favorites</strong> (<code>ham:favorites</code>) — the satellites you
+          star, and whether each has a pass reminder turned on (just the satellite's catalogue
+          number, name, and an on/off flag). <em>Stored only if you click “Accept”.</em></li>
+      <li><strong>Your choice</strong> (<code>ham:consent</code>) — whether you accepted or
+          declined preference storage, so you aren't asked again.</li>
+    </ul>
+    <p class="note">No accounts, names, emails, or identifiers are stored. None of the above is
+       transmitted to or stored on the HAM server.</p>
+
+    <h2>Your location</h2>
+    <p>If you allow it (via your browser's own permission prompt), HAM reads your
+       approximate location to centre the "satellites overhead" view on you. Your
+       coordinates are sent to the n2yo API (through this site's server, which only forwards
+       the request) to find which satellites are above you. Your coordinates are
+       <strong>not stored</strong> — by the app, or on the server. You can decline the
+       browser prompt and enter coordinates manually (or use 0°, 0°) instead.</p>
+
+    <h2>Notifications &amp; reminders</h2>
+    <p>You can star satellites as <strong>favorites</strong> and switch on a <strong>pass
+       reminder</strong> for any of them. When you do:</p>
+    <ul>
+      <li>HAM asks your browser for notification permission <strong>only when you turn on
+          your first reminder</strong> — never before. If you decline, the reminder simply
+          stays off.</li>
+      <li>The time a satellite will next rise over you is calculated <strong>entirely on your
+          device</strong> from its orbital elements. Your favorites and reminder settings are
+          <strong>never sent to the HAM server</strong> or anywhere else.</li>
+      <li>Reminders are shown using your browser's own notifications and only fire
+          <strong>while HAM is open in a browser tab</strong> (including a background tab).
+          HAM has no background push service, so nothing runs when the tab is closed.</li>
+    </ul>
+
+    <h2>Third-party services</h2>
+    <p>To work, the app requests data from these services as needed (satellite IDs/names,
+       and your coordinates for the overhead query):</p>
+    <ul>
+      <li><a href="https://www.n2yo.com/" target="_blank" rel="noopener">n2yo</a> — satellite positions and orbital elements.</li>
+      <li><a href="https://db.satnogs.org/" target="_blank" rel="noopener">SatNOGS DB</a> — transmitter frequencies.</li>
+      <li><a href="https://www.wikimedia.org/" target="_blank" rel="noopener">Wikimedia / Wikipedia</a> — satellite descriptions and images.</li>
+    </ul>
+    <p class="note">These services have their own privacy policies. Satellite images shown in
+       the "About this satellite" popup are loaded directly from Wikimedia.</p>
+
+    <h2>Your choices</h2>
+    <p>You can clear everything HAM has stored on this device — your consent choice,
+       saved preferences, and the orbit cache — at any time:</p>
+    <p>
+      <button class="clear" id="clear-btn">Clear stored data &amp; reset choices</button>
+      <span id="cleared">Cleared — reloading…</span>
+    </p>
+    <p class="note">You can also clear this site's data through your browser's settings. After
+       clearing, the consent banner will appear again next time you open HAM.</p>
+
+    <a class="back" href="/">← Back to HAM</a>
+  </main>
+
+  <script>
+    document.getElementById("clear-btn").addEventListener("click", function () {
+      try {
+        // Remove all HAM keys: consent, settings, and the tle: orbit cache.
+        var keys = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && (k.indexOf("ham:") === 0 || k.indexOf("tle:") === 0)) keys.push(k);
+        }
+        keys.forEach(function (k) { localStorage.removeItem(k); });
+      } catch (e) {}
+      document.getElementById("cleared").style.display = "inline";
+      setTimeout(function () { location.href = "/"; }, 900);
+    });
+  </script>
+</body>
+</html>

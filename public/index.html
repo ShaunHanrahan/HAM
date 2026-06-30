@@ -1,0 +1,1945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HAM — Live Satellite Tracker</title>
+<style>
+  :root {
+    --bg: #05070d;
+    --panel: rgba(14, 20, 34, 0.82);
+    --panel-border: rgba(90, 130, 200, 0.25);
+    --accent: #4fd1ff;
+    --accent-dim: #2b8db8;
+    --text: #e6edf6;
+    --muted: #8aa0bd;
+    --follow: #ffcc4d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #globe { position: absolute; inset: 0; }
+  #globe canvas { display: block; cursor: grab; }
+  #globe canvas:active { cursor: grabbing; }
+
+  /* Left column: stacks panel + info so they never overlap */
+  #left-col {
+    position: fixed; top: 16px; bottom: 16px; left: 16px;
+    width: 320px; max-width: calc(100vw - 32px);
+    display: flex; flex-direction: column; gap: 12px;
+    z-index: 10; pointer-events: none;          /* empty gap doesn't block globe drag */
+  }
+  #left-col > * { pointer-events: auto; min-height: 0; }  /* min-height:0 allows shrink+scroll */
+
+  /* Sidebar */
+  #panel {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+    backdrop-filter: blur(12px); padding: 16px; overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  #panel h1 {
+    margin: 0 0 2px; font-size: 18px; letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+
+  .field { position: relative; margin-bottom: 10px; }
+  input[type="text"], select {
+    width: 100%; padding: 10px 12px; border-radius: 9px;
+    border: 1px solid var(--panel-border); background: rgba(5,9,18,0.7);
+    color: var(--text); font-size: 14px; outline: none;
+  }
+  input[type="text"]:focus, select:focus { border-color: var(--accent-dim); }
+  label.small { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; display:block; margin: 10px 0 4px; }
+
+  #results {
+    list-style: none; margin: 6px 0 0; padding: 0; max-height: 230px; overflow-y: auto;
+    border-radius: 9px;
+  }
+  #results li {
+    padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    display: flex; justify-content: space-between; gap: 8px; align-items: center;
+  }
+  #results li:hover { background: rgba(79,209,255,0.12); }
+  #results li .id { color: var(--muted); font-size: 11px; }
+  #results .empty { color: var(--muted); cursor: default; }
+  #results .empty:hover { background: none; }
+
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+
+  .mode-btn {
+    padding: 9px 8px; border-radius: 9px; cursor: pointer; font-size: 13px;
+    background: rgba(5,9,18,0.7); color: var(--muted);
+    border: 1px solid var(--panel-border); transition: all .15s;
+  }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active {
+    background: rgba(79,209,255,0.15); color: var(--accent);
+    border-color: var(--accent-dim);
+  }
+  /* Hide-groups menu — collapsible accordion of per-group on/off switches */
+  .hide-header {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    margin: 10px 0 0; padding: 0; background: none; border: none;
+    color: var(--muted); cursor: pointer; text-align: left;
+  }
+  .hide-header:hover { color: var(--text); }
+  .hide-header .small { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .hide-count { font-size: 11px; color: var(--accent); }
+  .hide-chevron { margin-left: auto; font-size: 11px; transition: transform .2s ease; }
+  .hide-header[aria-expanded="true"] .hide-chevron { transform: rotate(180deg); }
+  .hide-body { display: none; }
+  .hide-body.open { display: block; }
+  .hide-body .toggle { margin-top: 8px; }
+  .hide-all { border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; }
+  /* Master "Hide all" partial state — some but not all groups hidden */
+  .toggle input[type="checkbox"]:indeterminate {
+    background: rgba(79,209,255,0.18); border-color: var(--accent-dim);
+  }
+  .toggle input[type="checkbox"]:indeterminate::after {
+    transform: translateY(-50%) translateX(8px); background: var(--accent);
+  }
+
+  /* Favorites menu — reuses the .hide-header/.hide-body accordion + .hide-count */
+  .remind-lead {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin-top: 10px; font-size: 12px; color: var(--muted);
+  }
+  .remind-lead input {
+    width: 58px; padding: 5px 7px; border-radius: 7px; text-align: center;
+    border: 1px solid var(--panel-border); background: rgba(5,9,18,0.7);
+    color: var(--text); font-size: 13px;
+  }
+  #fav-list { margin-top: 4px; }
+  .fav-empty { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .fav-row {
+    display: flex; align-items: center; gap: 6px; padding: 6px 2px;
+    border-bottom: 1px solid rgba(90,130,200,0.12);
+  }
+  .fav-row:last-child { border-bottom: none; }
+  .fav-name {
+    flex: 1; min-width: 0; font-size: 13px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .fav-name:hover { color: var(--accent); }
+  .fav-eta { font-size: 11px; color: var(--muted); white-space: nowrap; flex: none; }
+  .fav-icon-btn {
+    flex: none; background: none; border: none; cursor: pointer; line-height: 1;
+    font-size: 13px; padding: 3px 4px; border-radius: 6px; color: var(--muted);
+  }
+  .fav-icon-btn:hover { background: rgba(79,209,255,0.12); color: var(--text); }
+  .fav-bell.on { color: var(--accent); }
+  .fav-x:hover { color: #ff9a9a; background: rgba(255,128,128,0.12); }
+  /* Favorited state for the follow-panel star button (matches the follow colour) */
+  button.wiki-btn.faved {
+    background: rgba(255,204,77,0.16); border-color: rgba(255,204,77,0.5); color: var(--follow);
+  }
+  button.wiki-btn.faved:hover { background: rgba(255,204,77,0.26); }
+  button.apply {
+    margin-top: 8px; width: 100%; padding: 9px; border-radius: 9px; cursor: pointer;
+    background: rgba(79,209,255,0.15); border: 1px solid var(--accent-dim);
+    color: var(--accent); font-size: 13px;
+  }
+  button.apply:hover { background: rgba(79,209,255,0.25); }
+  .obs-readout { font-size: 11px; color: var(--muted); margin-top: 8px; min-height: 14px; }
+
+  /* Next-pass look-ahead slider */
+  .np-look { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  #np-range { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  #np-horizon { font-size: 12px; white-space: nowrap; }
+
+  /* Info card */
+  #info {
+    margin-top: auto; overflow-y: auto;        /* sits at the bottom of the column */
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+    backdrop-filter: blur(12px); padding: 14px 16px; display: none;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  #info .name { font-size: 15px; font-weight: 600; color: var(--follow); display:flex; justify-content:space-between; align-items:center;}
+  #info .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 10px; font-size: 13px; }
+  #info .grid div span { color: var(--muted); font-size: 11px; display:block; }
+  #info .stop {
+    margin-top: 12px; width: 100%; padding: 8px; border-radius: 8px; cursor: pointer;
+    background: rgba(255,204,77,0.15); border: 1px solid rgba(255,204,77,0.4); color: var(--follow); font-size: 13px;
+  }
+  #info .stop:hover { background: rgba(255,204,77,0.25); }
+  .toggle {
+    display:flex; align-items:center; gap:9px; font-size:12px; color:var(--muted);
+    margin-top:10px; cursor:pointer; user-select:none; -webkit-user-select:none;
+  }
+  /* Sleek toggle switch (replaces the native checkbox) */
+  .toggle input[type="checkbox"] {
+    appearance:none; -webkit-appearance:none; margin:0; flex:none;
+    position:relative; width:38px; height:22px; border-radius:999px;
+    background:rgba(5,9,18,0.7); border:1px solid var(--panel-border);
+    cursor:pointer; transition:background .2s ease, border-color .2s ease;
+  }
+  .toggle input[type="checkbox"]::after {
+    content:""; position:absolute; top:50%; left:2px; transform:translateY(-50%);
+    width:16px; height:16px; border-radius:50%; background:var(--muted);
+    box-shadow:0 1px 2px rgba(0,0,0,0.5);
+    transition:transform .2s ease, background .2s ease;
+  }
+  .toggle input[type="checkbox"]:hover { border-color:var(--accent-dim); }
+  .toggle input[type="checkbox"]:checked {
+    background:rgba(79,209,255,0.25); border-color:var(--accent-dim);
+  }
+  .toggle input[type="checkbox"]:checked::after {
+    transform:translateY(-50%) translateX(16px); background:var(--accent);
+  }
+  .toggle input[type="checkbox"]:focus-visible { outline:2px solid var(--accent-dim); outline-offset:2px; }
+
+  .freq-list { margin-top: 6px; max-height: 150px; overflow-y: auto; font-size: 12px; }
+  .freq-list .muted { color: var(--muted); }
+  .freq-item {
+    padding: 6px 8px; margin-bottom: 5px; border-radius: 7px;
+    background: rgba(5,9,18,0.6); border: 1px solid var(--panel-border);
+  }
+  .freq-item.dead { opacity: 0.5; }
+  .freq-item .desc { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .freq-item .desc b { font-weight: 600; }
+  .freq-item .tags { display:inline-flex; gap:6px; align-items:center; flex:none; }
+  .freq-item .tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+    background: rgba(79,209,255,0.15); color: var(--accent); border: 1px solid var(--accent-dim);
+  }
+  /* Provenance tag (SatNOGS / JE9PEL / built-in) — muted so the status tag leads */
+  .freq-item .src {
+    font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+    background: rgba(140,160,189,0.12); color: var(--muted); border: 1px solid var(--panel-border);
+  }
+  .freq-item .tag.off { background: rgba(140,160,189,0.12); color: var(--muted); border-color: var(--panel-border); }
+  .freq-item .lines { margin-top: 4px; color: var(--muted); line-height: 1.5; }
+  .freq-item .lines b { color: var(--text); font-weight: 600; }
+  /* Live Doppler offset shown next to the corrected frequency */
+  .freq-item .lines .freq-delta { color: var(--accent); font-size: 11px; }
+
+  /* Camera controls (bottom-right) */
+  #camctl {
+    position: absolute; bottom: 16px; right: 16px; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+    backdrop-filter: blur(12px); padding: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  .cam-dpad {
+    display: grid; grid-template-columns: repeat(3, 38px); grid-template-rows: repeat(3, 38px);
+    gap: 4px;
+    grid-template-areas: ". up ." "left reset right" ". down .";
+  }
+  .cam-dpad .up { grid-area: up; } .cam-dpad .down { grid-area: down; }
+  .cam-dpad .left { grid-area: left; } .cam-dpad .right { grid-area: right; }
+  .cam-dpad .reset { grid-area: reset; }
+  .cam-row { display: flex; gap: 4px; width: 100%; }
+  .cam-row .cam-btn { flex: 1; }
+  .cam-btn {
+    height: 38px; display: flex; align-items: center; justify-content: center;
+    background: rgba(5,9,18,0.7); border: 1px solid var(--panel-border); color: var(--text);
+    border-radius: 9px; font-size: 14px; cursor: pointer;
+    user-select: none; -webkit-user-select: none; touch-action: none;
+  }
+  .cam-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .cam-btn:active { background: rgba(79,209,255,0.22); }
+  .cam-toggle {
+    width: 100%; padding: 8px; border-radius: 9px; cursor: pointer; font-size: 12px;
+    background: rgba(79,209,255,0.15); border: 1px solid var(--accent-dim); color: var(--accent);
+    user-select: none; -webkit-user-select: none;
+  }
+  .cam-toggle.off { background: rgba(5,9,18,0.7); border-color: var(--panel-border); color: var(--muted); }
+  .cam-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #status {
+    position: absolute; top: 16px; right: 16px; z-index: 10; font-size: 12px;
+    color: var(--muted); background: var(--panel); border: 1px solid var(--panel-border);
+    padding: 8px 12px; border-radius: 9px; backdrop-filter: blur(12px);
+  }
+  #status b { color: var(--accent); }
+  .err { color: #ff8080 !important; }
+  a { color: var(--accent); }
+
+  /* "About this satellite" button */
+  button.wiki-btn {
+    margin-top: 12px; width: 100%; padding: 9px; border-radius: 9px; cursor: pointer;
+    background: rgba(79,209,255,0.15); border: 1px solid var(--accent-dim);
+    color: var(--accent); font-size: 13px;
+  }
+  button.wiki-btn:hover { background: rgba(79,209,255,0.25); }
+  button.wiki-btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* Wikipedia info popup */
+  #wiki-overlay {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(3,5,10,0.62); backdrop-filter: blur(4px);
+  }
+  #wiki-card {
+    position: relative; width: 420px; max-width: 100%; max-height: 82vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+    padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  #wiki-close {
+    position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(5,9,18,0.7); border: 1px solid var(--panel-border); color: var(--muted);
+    cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  #wiki-close:hover { color: var(--text); border-color: var(--accent-dim); }
+  #wiki-img {
+    display: block; width: 100%; max-height: 240px; object-fit: cover;
+    border-radius: 10px; margin-bottom: 12px; background: rgba(5,9,18,0.6);
+  }
+  #wiki-title { margin: 0 0 8px; padding-right: 28px; font-size: 18px; color: var(--accent); }
+  #wiki-extract { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--text); }
+  #wiki-link { font-size: 13px; }
+
+  /* Transient toast (errors / no-info) */
+  #toast {
+    position: fixed; top: 64px; left: 50%; transform: translateX(-50%) translateY(-8px);
+    z-index: 60; max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 10px;
+    background: rgba(40,16,16,0.92); border: 1px solid rgba(255,128,128,0.5); color: #ffb3b3;
+    font-size: 13px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Hover name bubble for cloud satellites */
+  #sat-tip {
+    position: fixed; z-index: 30; display: none; pointer-events: none;
+    padding: 4px 8px; border-radius: 7px; font-size: 12px; white-space: nowrap;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--panel-border); backdrop-filter: blur(8px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  }
+
+  /* Overlap picker — clickable list of bunched-together satellites */
+  #sat-picker {
+    position: fixed; z-index: 40; display: none; pointer-events: auto;
+    min-width: 140px; max-width: 260px; max-height: 240px; overflow-y: auto;
+    padding: 4px; border-radius: 9px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--panel-border); backdrop-filter: blur(12px);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+  }
+  #sat-picker .pick-row {
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #sat-picker .pick-row:hover { background: rgba(79,209,255,0.14); color: var(--accent); }
+
+  .privacy-link { display: inline-block; margin-top: 10px; font-size: 11px; color: var(--muted); }
+  .privacy-link:hover { color: var(--accent); }
+
+  /* Consent banner */
+  #consent {
+    position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 70; display: none;
+    align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+    padding: 12px 16px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(12px); box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    font-size: 12.5px; color: var(--muted); max-width: 760px; margin: 0 auto;
+  }
+  #consent span:first-child { flex: 1; min-width: 220px; line-height: 1.5; }
+  #consent .consent-btns { display: flex; gap: 8px; flex: none; }
+  #consent button {
+    padding: 8px 16px; border-radius: 9px; cursor: pointer; font-size: 13px;
+    border: 1px solid var(--panel-border); background: rgba(5,9,18,0.7); color: var(--text);
+  }
+  #consent #consent-decline:hover { color: var(--text); border-color: var(--muted); }
+  #consent #consent-accept {
+    background: rgba(79,209,255,0.18); border-color: var(--accent-dim); color: var(--accent);
+  }
+  #consent #consent-accept:hover { background: rgba(79,209,255,0.3); }
+</style>
+</head>
+<body>
+  <div id="globe"></div>
+
+  <div id="status">Loading…</div>
+
+  <div id="left-col">
+  <div id="panel">
+    <h1>🛰 HAM</h1>
+    <div class="sub">High-Apogee Monitor · live satellite tracker</div>
+
+    <div class="field">
+      <input id="search" type="text" placeholder="Search by name, or type a NORAD ID…" autocomplete="off" />
+    </div>
+    <ul id="results"></ul>
+
+    <label class="small">Show satellites over me</label>
+    <div class="row">
+      <select id="category">
+        <option value="0">All categories</option>
+        <option value="1">Brightest</option>
+        <option value="2">Space stations</option>
+        <option value="52">Starlink</option>
+        <option value="20">GPS</option>
+        <option value="18">Amateur radio</option>
+        <option value="3">Weather</option>
+        <option value="10">Geostationary</option>
+        <option value="15">Iridium</option>
+      </select>
+      <select id="radius">
+        <option value="45">45° sky</option>
+        <option value="70" selected>70° sky</option>
+        <option value="90">Whole sky</option>
+      </select>
+    </div>
+
+    <button class="hide-header" id="hide-header" type="button" aria-expanded="false" aria-controls="hide-body">
+      <span class="small">Hide groups</span>
+      <span class="hide-count" id="hide-count"></span>
+      <span class="hide-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div class="hide-body" id="hide-body">
+      <label class="toggle hide-all"><input type="checkbox" id="hide-all" /> Hide all</label>
+      <div id="hide-list"><!-- individual group switches built from EXCLUDERS --></div>
+    </div>
+
+    <button class="hide-header" id="fav-header" type="button" aria-expanded="false" aria-controls="fav-body">
+      <span class="small">★ Favorites</span>
+      <span class="hide-count" id="fav-count"></span>
+      <span class="hide-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div class="hide-body" id="fav-body">
+      <label class="remind-lead">🔔 Remind me
+        <input type="number" id="remind-lead" min="1" max="1440" value="10" /> min before a pass</label>
+      <div id="fav-list"><!-- favorite rows built in renderFavorites --></div>
+    </div>
+
+    <label class="small">Observer location</label>
+    <div class="row" id="obs-mode">
+      <button class="mode-btn active" data-mode="gps">📍 My location</button>
+      <button class="mode-btn" data-mode="manual">🌐 Coordinates</button>
+    </div>
+    <div id="manual-coords" style="display:none; margin-top:8px;">
+      <div class="row">
+        <input id="in-lat" type="text" inputmode="decimal" placeholder="Latitude (-90…90)" />
+        <input id="in-lng" type="text" inputmode="decimal" placeholder="Longitude (-180…180)" />
+      </div>
+      <button class="apply" id="apply-coords">Apply coordinates</button>
+    </div>
+    <div class="obs-readout" id="obs-readout"></div>
+    <a class="privacy-link" href="/privacy.html" target="_blank" rel="noopener">Privacy &amp; data</a>
+  </div>
+
+  <div id="info">
+    <div class="name"><span id="i-name">—</span><span class="id" id="i-id"></span></div>
+    <div class="grid">
+      <div><span>Latitude</span><b id="i-lat">—</b></div>
+      <div><span>Longitude</span><b id="i-lng">—</b></div>
+      <div><span>Altitude</span><b id="i-alt">—</b></div>
+      <div><span>Speed</span><b id="i-spd">—</b></div>
+      <div><span>Period</span><b id="i-per">—</b></div>
+      <div><span>Inclination</span><b id="i-inc">—</b></div>
+      <div><span>Heading</span><b id="i-head">—</b></div>
+      <div><span>Elevation</span><b id="i-el">—</b></div>
+    </div>
+    <label class="small" style="margin-top:12px;">🛰 Closest pass over you</label>
+    <div class="np-look">
+      <input type="range" id="np-range" min="0" max="5" step="1" value="1" aria-label="Pass look-ahead window" />
+      <span class="muted" id="np-horizon">in the next 24 hrs</span>
+    </div>
+    <div class="grid" id="i-pass">
+      <div><span>Date / time</span><b id="np-time">—</b></div>
+      <div><span>In</span><b id="np-eta">—</b></div>
+      <div><span>Closest distance</span><b id="np-dist">—</b></div>
+      <div><span>Max elevation</span><b id="np-elev">—</b></div>
+    </div>
+    <label class="small" style="margin-top:12px;">📡 Frequencies</label>
+    <div id="i-freq" class="freq-list">—</div>
+    <label class="toggle"><input type="checkbox" id="lockcam" checked /> Keep camera locked on satellite</label>
+    <label class="toggle"><input type="checkbox" id="groundtrack" /> Ground track (vs. closed orbit)</label>
+    <button class="wiki-btn" id="fav-btn">☆ Add to favorites</button>
+    <button class="wiki-btn" id="wiki-btn">📖 About this satellite</button>
+    <button class="stop" id="stop">✕ Stop following</button>
+  </div>
+  </div><!-- /#left-col -->
+
+  <!-- Wikipedia info popup (picture + summary of the followed satellite) -->
+  <div id="wiki-overlay">
+    <div id="wiki-card">
+      <button id="wiki-close" aria-label="Close">✕</button>
+      <img id="wiki-img" alt="" />
+      <h2 id="wiki-title"></h2>
+      <p id="wiki-extract"></p>
+      <a id="wiki-link" target="_blank" rel="noopener">Read more on Wikipedia →</a>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <div id="sat-tip"></div>
+  <!-- Overlap picker: lists bunched-together satellites so you can pick by name -->
+  <div id="sat-picker"></div>
+
+  <!-- Consent banner — gates preference storage (TLE cache is always on) -->
+  <div id="consent">
+    <span>HAM remembers your filter &amp; view settings, favorites, and reminders in your browser's local storage so they're here next visit. A strictly-necessary orbit cache is always used. No tracking or ads. <a href="/privacy.html" target="_blank" rel="noopener">Privacy &amp; data</a>.</span>
+    <span class="consent-btns">
+      <button id="consent-decline">Decline</button>
+      <button id="consent-accept">Accept</button>
+    </span>
+  </div>
+
+  <div id="camctl">
+    <div class="cam-dpad">
+      <button class="cam-btn up"    data-act="up"    title="Rotate up">▲</button>
+      <button class="cam-btn left"  data-act="left"  title="Rotate left">◀</button>
+      <button class="cam-btn reset" data-act="reset" title="Reset view">⤾</button>
+      <button class="cam-btn right" data-act="right" title="Rotate right">▶</button>
+      <button class="cam-btn down"  data-act="down"  title="Rotate down">▼</button>
+    </div>
+    <div class="cam-row">
+      <button class="cam-btn" data-act="zoomout" title="Zoom out">－</button>
+      <button class="cam-btn" data-act="zoomin"  title="Zoom in">＋</button>
+    </div>
+    <button id="autorotate-btn" class="cam-toggle">⟳ Auto-rotate: on</button>
+  </div>
+
+  <!-- Surface any load/runtime error on-screen so it's not a silent "Loading…" -->
+  <script>
+    function showErr(msg) {
+      var s = document.getElementById("status");
+      if (s) { s.textContent = "⚠ " + msg; s.className = "err"; }
+      console.error("HAM:", msg);
+    }
+    window.addEventListener("error", function (e) {
+      if (e.target && e.target.src) showErr("Failed to load script: " + e.target.src);
+      else showErr((e.message || "Script error") + (e.filename ? " (" + e.filename + ":" + e.lineno + ")" : ""));
+    }, true);
+    window.addEventListener("unhandledrejection", function (e) {
+      showErr("Promise: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    });
+  </script>
+  <script src="/vendor/satellite.min.js"></script>
+  <script src="/vendor/three.min.js"></script>
+  <script>
+  try {
+  // =========================================================================
+  // Constants & helpers
+  // =========================================================================
+  const EARTH_KM = 6371;          // real earth radius
+  const R = 100;                  // earth radius in scene units
+  const KM = R / EARTH_KM;        // scene units per km
+  const TEX = "/vendor/";
+
+  const statusEl = document.getElementById("status");
+  const setStatus = (html, isErr) => {
+    statusEl.innerHTML = html;
+    statusEl.classList.toggle("err", !!isErr);
+  };
+
+  // Escape untrusted strings (satellite names, transmitter descriptions from the
+  // n2yo / SatNOGS catalogs) before interpolating them into innerHTML.
+  const escapeHtml = s =>
+    String(s ?? "").replace(/[&<>"']/g, c =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // lat/lng/altitude(scene units) -> 3D position aligned with the blue-marble texture
+  function latLngToVec(lat, lng, radius) {
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lng + 180) * Math.PI / 180;
+    return new THREE.Vector3(
+      -radius * Math.sin(phi) * Math.cos(theta),
+       radius * Math.cos(phi),
+       radius * Math.sin(phi) * Math.sin(theta)
+    );
+  }
+
+  // =========================================================================
+  // Three.js scene
+  // =========================================================================
+  const container = document.getElementById("globe");
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 6000);
+  camera.position.set(0, 60, 320);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  container.appendChild(renderer.domElement);
+
+  // Lightweight orbit controls (no external add-on) — drag to rotate, wheel to zoom.
+  // Orbits a movable pivot `_target` (Earth's centre normally, the satellite when locked).
+  const controls = {
+    autoRotate: true,
+    _target: new THREE.Vector3(0, 0, 0),
+    _r: camera.position.length(),
+    _theta: Math.atan2(camera.position.x, camera.position.z),
+    _phi: Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1)),
+    _drag: false, _hold: false, _lx: 0, _ly: 0,
+    setFromVec(v) {
+      const len = v.length() || 1;
+      this._theta = Math.atan2(v.x, v.z);
+      this._phi = Math.acos(THREE.MathUtils.clamp(v.y / len, -1, 1));
+    },
+    update() {
+      // Auto-rotate spins the globe only — never while a satellite is locked.
+      if (this.autoRotate && !this._drag && !this._hold && !followed) this._theta += 0.0009;
+      this._phi = THREE.MathUtils.clamp(this._phi, 0.12, Math.PI - 0.12);
+      const sp = Math.sin(this._phi), t = this._target;
+      camera.position.set(
+        t.x + this._r * sp * Math.sin(this._theta),
+        t.y + this._r * Math.cos(this._phi),
+        t.z + this._r * sp * Math.cos(this._theta)
+      );
+      camera.lookAt(t);
+    }
+  };
+  // Zoom range depends on mode: close when orbiting a locked satellite, far for the globe.
+  function clampR(r) {
+    const close = followed && EL.lock.checked;
+    return THREE.MathUtils.clamp(r, close ? 15 : 130, close ? 260 : 520);
+  }
+  const _dom = renderer.domElement;
+  _dom.addEventListener("pointerdown", e => { controls._drag = true; controls._lx = e.clientX; controls._ly = e.clientY; });
+  window.addEventListener("pointerup", () => { controls._drag = false; });
+  window.addEventListener("pointermove", e => {
+    if (!controls._drag) return;
+    controls._theta -= (e.clientX - controls._lx) * 0.005;
+    controls._phi   -= (e.clientY - controls._ly) * 0.005;
+    controls._lx = e.clientX; controls._ly = e.clientY;
+  });
+  _dom.addEventListener("wheel", e => {
+    e.preventDefault();
+    controls._r = clampR(controls._r * (1 + e.deltaY * 0.0012));
+  }, { passive: false });
+
+  const texLoader = new THREE.TextureLoader();
+  texLoader.setCrossOrigin("anonymous");
+
+  // Earth
+  const earth = new THREE.Mesh(
+    new THREE.SphereGeometry(R, 64, 64),
+    new THREE.MeshPhongMaterial({
+      color: 0x2a4a7a,   // fallback tint so the globe is visible even if the texture is missing
+      map: texLoader.load(TEX + "earth-blue-marble.jpg"),
+      bumpMap: texLoader.load(TEX + "earth-topology.png"),
+      bumpScale: 0.6,
+      shininess: 6
+    })
+  );
+  scene.add(earth);
+
+  // Stars
+  scene.add(new THREE.Mesh(
+    new THREE.SphereGeometry(3000, 32, 32),
+    new THREE.MeshBasicMaterial({ map: texLoader.load(TEX + "night-sky.png"), side: THREE.BackSide })
+  ));
+
+  // Lighting (mostly ambient so satellites stay visible everywhere)
+  scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+  sun.position.set(300, 150, 300);
+  scene.add(sun);
+
+  // Round sprite texture for the point cloud
+  function makeDotTexture() {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.4, "rgba(255,255,255,0.9)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
+    return new THREE.CanvasTexture(c);
+  }
+  const dotTex = makeDotTexture();
+
+  // Satellite point cloud (GPU)
+  const cloudMat = new THREE.PointsMaterial({
+    size: 3.2, map: dotTex, color: 0x4fd1ff,
+    transparent: true, depthWrite: false, sizeAttenuation: true, alphaTest: 0.15
+  });
+  const cloudPoints = new THREE.Points(new THREE.BufferGeometry(), cloudMat);
+  scene.add(cloudPoints);
+
+  // Followed satellite marker + orbit + label
+  const followSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(2.0, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffcc4d })
+  );
+  followSphere.visible = false;
+  scene.add(followSphere);
+  let orbitLine = null;
+  let followLabel = null;
+
+  function makeLabel(text) {
+    const pad = 12, font = 26, DPR = 4; // render 4× so the texture stays crisp when zoomed in
+    const m = document.createElement("canvas").getContext("2d");
+    m.font = font + "px sans-serif";
+    const w = Math.ceil(m.measureText(text).width) + pad * 2;
+    const h = font + pad;
+    const c = document.createElement("canvas");
+    c.width = w * DPR; c.height = h * DPR;
+    const g = c.getContext("2d");
+    g.scale(DPR, DPR);
+    g.font = font + "px sans-serif";
+    g.fillStyle = "#ffcc4d";
+    g.textBaseline = "middle";
+    g.shadowColor = "#000"; g.shadowBlur = 4;
+    g.fillText(text, pad, h / 2);
+    const tex = new THREE.CanvasTexture(c);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    spr.scale.set((w / h) * 9, 9, 1); // world-space scale unchanged — DPR only affects texture resolution
+    spr.userData.baseScale = { x: (w / h) * 9, y: 9 }; // remembered so zoom-scaling preserves aspect ratio
+    spr.center.set(-0.05, 0.5); // sit to the right of the marker
+    return spr;
+  }
+
+  window.addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  // =========================================================================
+  // State
+  // =========================================================================
+  const MAX_SATS = 150;    // bounds both the TLE fetch burst and per-frame work
+  // Exclusion filters: hide whole groups from the overhead cloud by name pattern.
+  // `label` is the human name shown in the Hide-groups menu (built from this array).
+  const EXCLUDERS = [
+    { key: "starlink", label: "Starlink",      re: /^STARLINK/i },
+    { key: "oneweb",   label: "OneWeb",        re: /^ONEWEB/i },
+    { key: "kuiper",   label: "Amazon Kuiper", re: /^KUIPER/i },        // Amazon's LEO constellation (Project Kuiper)
+    { key: "iridium",  label: "Iridium",       re: /^IRIDIUM/i },
+    { key: "flock",    label: "Flock",         re: /^FLOCK\b/i },        // Planet Labs imaging CubeSats, e.g. "FLOCK 4X-1"
+    { key: "gps",      label: "GPS",           re: /^(GPS|NAVSTAR)\b/i },// n2yo: "GPS BIIR-2 (PRN 13)", "NAVSTAR …"
+    { key: "cosmos",   label: "Cosmos",        re: /^COSMOS\b/i },       // Soviet/Russian Kosmos series, e.g. "COSMOS 2251"
+    { key: "debris",   label: "Debris",        re: /\bDEB\b/i },         // n2yo debris names end in " DEB"
+    { key: "rb",       label: "Rocket bodies", re: /\bR\/B\b/i }         // rocket bodies
+  ];
+  const hideSet = new Set();
+  let rawAbove = [];       // last /above result mapped, before exclusion filters
+  let observer = { lat: 0, lng: 0, alt: 0 };
+  let cloud = [];          // [{id,name,lat,lng,altKm,satrec}] — index matches point cloud
+  let followed = null;     // {id,name,satrec,periodMin,inc}
+  const satrecs = new Map(); // id -> parsed satrec (so we never re-parse / re-fetch)
+  let cloudPos = new Float32Array(0);
+  let cloudAttr = null;
+  const tleQueue = [];
+  let tleActive = 0;
+
+  // =========================================================================
+  // Observer location
+  // =========================================================================
+  const readoutEl = document.getElementById("obs-readout");
+  const manualBox = document.getElementById("manual-coords");
+  const setReadout = txt => { readoutEl.textContent = txt; };
+
+  function aimCamera(lat, lng, dist) {
+    controls._target.set(0, 0, 0);
+    controls.setFromVec(latLngToVec(lat, lng, 1));
+    controls._r = dist;
+    controls.update();
+  }
+
+  function setObserver(lat, lng, label) {
+    observer = { lat, lng, alt: 0 };
+    setReadout(`${label}: ${lat.toFixed(3)}°, ${lng.toFixed(3)}°`);
+    if (!followed) aimCamera(lat, lng, 300);
+    else refreshPass();        // location moved — recompute the next pass
+    refreshCloud();
+  }
+
+  function useGeolocation() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) {
+        setReadout("Geolocation unavailable — using 0°, 0°.");
+        refreshCloud(); return resolve();
+      }
+      setReadout("Finding your location…");
+      navigator.geolocation.getCurrentPosition(
+        pos => { setObserver(pos.coords.latitude, pos.coords.longitude, "My location"); resolve(); },
+        () => { setReadout("Location denied — using 0°, 0°."); refreshCloud(); resolve(); },
+        { timeout: 7000 }
+      );
+    });
+  }
+
+  let obsMode = "gps";
+  document.querySelectorAll("#obs-mode .mode-btn").forEach(btn => {
+    btn.onclick = () => {
+      obsMode = btn.dataset.mode;
+      document.querySelectorAll("#obs-mode .mode-btn")
+        .forEach(b => b.classList.toggle("active", b === btn));
+      manualBox.style.display = obsMode === "manual" ? "block" : "none";
+      if (obsMode === "gps") useGeolocation();
+    };
+  });
+
+  document.getElementById("apply-coords").onclick = applyManual;
+  document.getElementById("in-lat").addEventListener("keydown", e => { if (e.key === "Enter") applyManual(); });
+  document.getElementById("in-lng").addEventListener("keydown", e => { if (e.key === "Enter") applyManual(); });
+  function applyManual() {
+    const lat = parseFloat(document.getElementById("in-lat").value);
+    const lng = parseFloat(document.getElementById("in-lng").value);
+    if (Number.isNaN(lat) || lat < -90 || lat > 90) { setReadout("⚠ Latitude must be -90…90."); return; }
+    if (Number.isNaN(lng) || lng < -180 || lng > 180) { setReadout("⚠ Longitude must be -180…180."); return; }
+    setObserver(lat, lng, "Custom");
+  }
+
+  // =========================================================================
+  // Overhead cloud
+  // =========================================================================
+  // /above is only used to DISCOVER what's overhead (cheap, called rarely).
+  // Each satellite is then animated client-side from its TLE.
+  async function refreshCloud() {
+    const cat = document.getElementById("category").value;
+    const rad = document.getElementById("radius").value;
+    try {
+      const r = await fetch(`/api/above/${observer.lat.toFixed(4)}/${observer.lng.toFixed(4)}/0/${rad}/${cat}`);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      rawAbove = (data.above || []).map(s => ({
+        id: s.satid, name: s.satname, lat: s.satlat, lng: s.satlng, altKm: s.satalt,
+        satrec: satrecs.get(s.satid) || null
+      }));
+      applyCloudFilter();
+    } catch (e) {
+      setStatus("⚠ " + escapeHtml(e.message), true);
+    }
+  }
+
+  // Apply the active exclusion filters to the last /above result and rebuild the
+  // cloud. Reused by the Hide chips so toggling a filter never re-hits /above.
+  function applyCloudFilter() {
+    const active = EXCLUDERS.filter(e => hideSet.has(e.key));
+    const list = rawAbove.filter(s => !active.some(e => e.re.test(s.name)));
+    const total = rawAbove.length;
+    list.sort((a, b) => a.altKm - b.altKm);     // keep the closest ones
+    cloud = list.slice(0, MAX_SATS);
+    rebuildCloudBuffer();
+    queueTLEs(cloud.map(s => s.id));            // fetch orbits (cached) for animation
+    if (!followed) setStatus(
+      total > cloud.length
+        ? `Showing <b>${cloud.length}</b> of <b>${total}</b> overhead`
+        : `<b>${cloud.length}</b> satellites overhead`);
+  }
+
+  function writePoint(i, lat, lng, altKm) {
+    const v = latLngToVec(lat, lng, R + altKm * KM);
+    cloudPos[i * 3] = v.x; cloudPos[i * 3 + 1] = v.y; cloudPos[i * 3 + 2] = v.z;
+  }
+
+  function rebuildCloudBuffer() {
+    cloudPos = new Float32Array(cloud.length * 3);
+    for (let i = 0; i < cloud.length; i++) writePoint(i, cloud[i].lat, cloud[i].lng, cloud[i].altKm);
+    const g = new THREE.BufferGeometry();
+    cloudAttr = new THREE.BufferAttribute(cloudPos, 3);
+    g.setAttribute("position", cloudAttr);
+    cloudPoints.geometry.dispose();
+    cloudPoints.geometry = g;
+  }
+
+  // Move every cloud satellite that has an orbit loaded (client-side, no API).
+  function propagateCloud(now) {
+    if (!cloudAttr) return;
+    const date = new Date(now);
+    let changed = false;
+    for (let i = 0; i < cloud.length; i++) {
+      if (!cloud[i].satrec) continue;
+      const p = propagate(cloud[i].satrec, date);
+      if (p) { writePoint(i, p.lat, p.lng, p.alt); changed = true; }
+    }
+    if (changed) cloudAttr.needsUpdate = true;
+  }
+
+  // ---- TLE cache + throttled loader ---------------------------------------
+  // localStorage keeps orbits across reloads (12h) so we rarely re-hit the API.
+  function cachedTLE(id) {
+    try {
+      const o = JSON.parse(localStorage.getItem("tle:" + id));
+      if (o && Date.now() - o.t < 12 * 3600 * 1000) return o;
+    } catch (e) {}
+    return null;
+  }
+  function storeTLE(id, l1, l2) {
+    try { localStorage.setItem("tle:" + id, JSON.stringify({ l1, l2, t: Date.now() })); } catch (e) {}
+  }
+  function setSatrec(id, l1, l2) {
+    const rec = satellite.twoline2satrec(l1, l2);
+    satrecs.set(id, rec);
+    const s = cloud.find(c => c.id === id);
+    if (s) s.satrec = rec;
+    return rec;
+  }
+  function queueTLEs(ids) {
+    for (const id of ids) {
+      if (satrecs.has(id)) continue;
+      const c = cachedTLE(id);
+      if (c) { setSatrec(id, c.l1, c.l2); continue; }
+      if (!tleQueue.includes(id)) tleQueue.push(id);
+    }
+    pumpTLE();
+  }
+  function pumpTLE() {
+    while (tleActive < 6 && tleQueue.length) {
+      const id = tleQueue.shift();
+      tleActive++;
+      fetch(`/api/tle/${id}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d && d.tle) { const [l1, l2] = d.tle.split(/\r?\n/); storeTLE(id, l1, l2); setSatrec(id, l1, l2); }
+        })
+        .catch(() => {})
+        .finally(() => { tleActive--; pumpTLE(); });
+    }
+  }
+
+  // =========================================================================
+  // Click-to-follow (raycast the point cloud)
+  // =========================================================================
+  const raycaster = new THREE.Raycaster();
+  raycaster.params.Points.threshold = 3;   // world-space pick radius (bounds candidates)
+  const mouse = new THREE.Vector2();
+  let downXY = null;
+  const OVERLAP_PX = 12;   // dots within this many screen px of the nearest are "tied"
+
+  // World position -> client-pixel {x,y} (for ranking candidates by on-screen
+  // proximity to the cursor — far more intuitive than three.js's depth ordering).
+  const _proj = new THREE.Vector3();
+  function worldToScreen(vec) {
+    _proj.copy(vec).project(camera);
+    const rect = _dom.getBoundingClientRect();
+    return {
+      x: rect.left + (_proj.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (-_proj.y * 0.5 + 0.5) * rect.height
+    };
+  }
+
+  // Raycast the cloud and return the satellites under the cursor, each with its
+  // pixel distance to the cursor, sorted nearest-first. intersectObject sorts by
+  // depth (closest to camera), which is NOT what you visually point at when dots
+  // overlap, so we re-rank by on-screen distance.
+  function pickCandidates(clientX, clientY) {
+    if (!cloudAttr) return [];
+    const rect = _dom.getBoundingClientRect();
+    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(cloudPoints);
+    const seen = new Set();
+    const cands = [];
+    const v = new THREE.Vector3();
+    for (const h of hits) {
+      if (h.index == null || seen.has(h.index)) continue;
+      seen.add(h.index);
+      const sat = cloud[h.index];
+      if (!sat) continue;
+      v.fromBufferAttribute(cloudAttr, h.index);   // dot's live (per-frame) position
+      const sp = worldToScreen(v);
+      cands.push({ sat, px: Math.hypot(sp.x - clientX, sp.y - clientY) });
+    }
+    cands.sort((a, b) => a.px - b.px);
+    return cands;
+  }
+
+  renderer.domElement.addEventListener("pointerdown", e => { downXY = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener("pointerup", e => {
+    if (!downXY) return;
+    const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
+    downXY = null;
+    if (moved > 6) return; // it was a drag, not a click
+    const cands = pickCandidates(e.clientX, e.clientY);
+    if (!cands.length) return;
+    // If several dots are bunched under the cursor, let the user disambiguate by
+    // name; otherwise follow the one nearest the cursor.
+    const tied = cands.filter(c => c.px <= cands[0].px + OVERLAP_PX);
+    if (tied.length >= 2) showPicker(tied, e.clientX, e.clientY);
+    else followSatellite(cands[0].sat.id, cands[0].sat.name);
+  });
+
+  // Hover-to-name: reuse the same ranking so the tooltip previews exactly what a
+  // click would follow (the nearest dot), with a "+N" hint when others overlap.
+  const tip = document.getElementById("sat-tip");
+  function hideTip() { tip.style.display = "none"; _dom.style.cursor = ""; }
+  renderer.domElement.addEventListener("pointermove", e => {
+    if (controls._drag) { hideTip(); return; }   // rotating the globe, not hovering
+    if (pickerOpen) { hideTip(); return; }       // don't fight the open picker
+    const cands = pickCandidates(e.clientX, e.clientY);
+    if (cands.length) {
+      const extra = cands.filter(c => c.px <= cands[0].px + OVERLAP_PX).length - 1;
+      tip.textContent = cands[0].sat.name + (extra > 0 ? "  +" + extra : "");
+      tip.style.left = (e.clientX + 14) + "px";
+      tip.style.top  = (e.clientY + 14) + "px";
+      tip.style.display = "block";
+      _dom.style.cursor = "pointer";              // affordance: this dot is clickable
+    } else {
+      hideTip();
+    }
+  });
+  renderer.domElement.addEventListener("pointerleave", hideTip);
+
+  // ---- Overlap picker: choose among bunched-together dots by name -----------
+  const pickerEl = document.getElementById("sat-picker");
+  let pickerOpen = false, pickerOutsideHandler = null;
+  function hidePicker() {
+    pickerOpen = false;
+    pickerEl.style.display = "none";
+    pickerEl.innerHTML = "";
+    if (pickerOutsideHandler) {
+      window.removeEventListener("pointerdown", pickerOutsideHandler, true);
+      pickerOutsideHandler = null;
+    }
+  }
+  function showPicker(list, x, y) {
+    hideTip();
+    pickerEl.innerHTML = "";
+    for (const c of list) {
+      const row = document.createElement("div");
+      row.className = "pick-row";
+      row.textContent = c.sat.name;               // textContent → no XSS
+      row.onclick = () => { const s = c.sat; hidePicker(); followSatellite(s.id, s.name); };
+      pickerEl.appendChild(row);
+    }
+    // Show, then clamp into the viewport using its measured size.
+    pickerEl.style.display = "block";
+    pickerEl.style.left = "0px"; pickerEl.style.top = "0px";
+    const w = pickerEl.offsetWidth, h = pickerEl.offsetHeight;
+    pickerEl.style.left = Math.min(x + 14, innerWidth  - w - 8) + "px";
+    pickerEl.style.top  = Math.min(y + 14, innerHeight - h - 8) + "px";
+    pickerOpen = true;
+    // Dismiss on any click outside the menu. Registered next tick so the click
+    // that opened it doesn't immediately close it.
+    setTimeout(() => {
+      pickerOutsideHandler = ev => { if (!pickerEl.contains(ev.target)) hidePicker(); };
+      window.addEventListener("pointerdown", pickerOutsideHandler, true);
+    }, 0);
+  }
+
+  // =========================================================================
+  // Search
+  // =========================================================================
+  const searchEl = document.getElementById("search");
+  const resultsEl = document.getElementById("results");
+  searchEl.addEventListener("input", renderResults);
+
+  function renderResults() {
+    const q = searchEl.value.trim().toLowerCase();
+    resultsEl.innerHTML = "";
+    if (!q) return;
+    if (/^\d+$/.test(q)) {
+      const li = document.createElement("li");
+      li.innerHTML = `Track satellite <span class="id">#${q}</span>`;
+      li.onclick = () => { followSatellite(Number(q)); searchEl.value = ""; renderResults(); };
+      resultsEl.appendChild(li);
+    }
+    const matches = cloud.filter(s => s.name.toLowerCase().includes(q)).slice(0, 25);
+    if (!matches.length && !/^\d+$/.test(q)) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No overhead matches. Try a NORAD ID number.";
+      resultsEl.appendChild(li);
+      return;
+    }
+    for (const s of matches) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span>${escapeHtml(s.name)}</span><span class="id">#${escapeHtml(s.id)}</span>`;
+      li.onclick = () => { followSatellite(s.id, s.name); searchEl.value = ""; renderResults(); };
+      resultsEl.appendChild(li);
+    }
+  }
+
+  // =========================================================================
+  // Follow a satellite
+  // =========================================================================
+  function propagate(satrec, date) {
+    const pv = satellite.propagate(satrec, date);
+    if (!pv.position) return null;
+    const gmst = satellite.gstime(date);
+    const geo = satellite.eciToGeodetic(pv.position, gmst);
+    return {
+      lat: satellite.degreesLat(geo.latitude),
+      lng: satellite.degreesLong(geo.longitude),
+      alt: geo.height,
+      vel: pv.velocity ? Math.hypot(pv.velocity.x, pv.velocity.y, pv.velocity.z) : null
+    };
+  }
+
+  // =========================================================================
+  // Next-pass prediction (client-side, no API) — when does the followed sat
+  // next rise above MIN_ELEV_DEG over the observer, and how close does it get?
+  // =========================================================================
+  const MIN_ELEV_DEG = 10;
+  // How far ahead the next-pass search looks (slider stops).
+  const PASS_HORIZONS = [
+    { label: "12 hrs",  ms: 12 * 3600e3 },
+    { label: "24 hrs",  ms: 24 * 3600e3 },
+    { label: "48 hrs",  ms: 48 * 3600e3 },
+    { label: "7 days",  ms: 7  * 24 * 3600e3 },
+    { label: "14 days", ms: 14 * 24 * 3600e3 },
+    { label: "28 days", ms: 28 * 24 * 3600e3 }
+  ];
+  let passHorizonIdx = 1;   // default = 24 hrs
+  // Azimuth degrees -> 16-point compass abbreviation (N, NNE, NE, …).
+  const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  const compass = deg => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+
+  // Observer geodetic in satellite.js convention: radians + height in km.
+  function observerGd() {
+    return {
+      longitude: observer.lng * Math.PI / 180,
+      latitude:  observer.lat * Math.PI / 180,
+      height:    observer.alt          // km (0 today)
+    };
+  }
+  function lookAt(satrec, gd, date) {
+    const pv = satellite.propagate(satrec, date);
+    if (!pv || !pv.position) return null;
+    const ecf = satellite.eciToEcf(pv.position, satellite.gstime(date));
+    return satellite.ecfToLookAngles(gd, ecf); // {azimuth, elevation, rangeSat}
+  }
+
+  // Range-rate (km/s) from the observer to the satellite: how fast the slant
+  // range is changing right now. Central finite difference of lookAt()'s range
+  // over ±DOPP_DT — reuses the existing look-angle math, no ECI→ECF velocity
+  // transform needed. Negative = approaching (range shrinking). Drives Doppler.
+  const C_KMS = 299792.458;   // speed of light, km/s
+  const DOPP_DT = 0.1;        // half-baseline for the finite difference, s
+  function rangeRate(satrec, gd, date) {
+    const a = lookAt(satrec, gd, new Date(date.getTime() - DOPP_DT * 1000));
+    const b = lookAt(satrec, gd, new Date(date.getTime() + DOPP_DT * 1000));
+    if (!a || !b) return null;
+    return (b.rangeSat - a.rangeSat) / (2 * DOPP_DT);   // km/s
+  }
+
+  // Closest-approach pass within the selected look-ahead window: the sample with
+  // the smallest slant range while above MIN_ELEV_DEG across ALL passes in the
+  // window (not just the first) — that's the peak of the closest pass, so a wider
+  // window can surface a better/closer pass. Returns {tMs, rangeKm, elevDeg} or null.
+  function nextPass(satrec) {
+    const gd = observerGd();
+    const start = Date.now();
+    const horizonMs = PASS_HORIZONS[passHorizonIdx].ms;
+    const horizon = start + horizonMs;
+    // Coarser step for longer windows to bound the (now always full) scan; the
+    // ±coarse @1s refine keeps the peak exact regardless. 30s ≤48h, 60s ≤7d, 120s beyond.
+    const coarse = horizonMs > 7 * 24 * 3600e3 ? 120e3 : (horizonMs > 2 * 24 * 3600e3 ? 60e3 : 30e3);
+
+    let best = null;
+    for (let t = start; t <= horizon; t += coarse) {
+      const look = lookAt(satrec, gd, new Date(t));
+      if (!look) continue;
+      const elevDeg = look.elevation * 180 / Math.PI;
+      if (elevDeg >= MIN_ELEV_DEG && (!best || look.rangeSat < best.range))
+        best = { t, range: look.rangeSat, elev: elevDeg };
+    }
+    if (!best) return null;
+
+    // Refine: 1s sampling ±coarse around the coarse peak for a tighter time/range.
+    let rt = best.t, rRange = best.range, rElev = best.elev;
+    for (let t = best.t - coarse; t <= best.t + coarse; t += 1000) {
+      if (t < start) continue;
+      const look = lookAt(satrec, gd, new Date(t));
+      if (look && look.rangeSat < rRange) {
+        rRange = look.rangeSat; rt = t; rElev = look.elevation * 180 / Math.PI;
+      }
+    }
+    return { tMs: rt, rangeKm: rRange, elevDeg: rElev };
+  }
+
+  // Soonest time (ms epoch) the satellite's elevation rises UP through
+  // MIN_ELEV_DEG over the observer, scanning the next 24 h. The reminder analogue
+  // of nextPass (which finds closest approach). Detecting a rising edge means a
+  // currently-overhead satellite reports its NEXT rise, not the one in progress.
+  // Returns null if there's no rise in the window.
+  function nextRise(satrec, fromMs) {
+    const gd = observerGd();
+    const start = fromMs == null ? Date.now() : fromMs;
+    const horizon = start + 24 * 3600e3;
+    const step = 60e3;                       // 60 s coarse scan
+    let prevAbove = null;
+    for (let t = start; t <= horizon; t += step) {
+      const look = lookAt(satrec, gd, new Date(t));
+      if (!look) { prevAbove = null; continue; }
+      const above = (look.elevation * 180 / Math.PI) >= MIN_ELEV_DEG;
+      if (prevAbove === false && above) {    // crossed from below to above between t-step and t
+        let lo = t - step, hi = t;           // bisect to ~1 s for a tight rise time
+        while (hi - lo > 1000) {
+          const mid = (lo + hi) / 2;
+          const lk = lookAt(satrec, gd, new Date(mid));
+          if (lk && (lk.elevation * 180 / Math.PI) >= MIN_ELEV_DEG) hi = mid; else lo = mid;
+        }
+        return Math.round(hi);
+      }
+      prevAbove = above;
+    }
+    return null;
+  }
+
+  function refreshPass() {
+    if (!followed) return;
+    followed.pass = nextPass(followed.satrec);
+    renderPass();
+  }
+
+  async function followSatellite(id, name) {
+    setStatus(`Loading orbit for #${id}…`);
+    const wasFollowing = !!followed;   // hop vs. fresh lock — controls zoom reset
+    try {
+      let l1, l2, satname = name;
+      const known = cachedTLE(id);          // reuse a cached orbit — no API call
+      if (known) {
+        l1 = known.l1; l2 = known.l2;
+      } else {
+        const r = await fetch(`/api/tle/${id}`);
+        const data = await r.json();
+        if (data.error) throw new Error(data.error);
+        if (!data.tle) throw new Error("No TLE available for this satellite.");
+        [l1, l2] = data.tle.split(/\r?\n/);
+        satname = data.info?.satname || name;
+        storeTLE(id, l1, l2);
+      }
+      const satrec = satellite.twoline2satrec(l1, l2);
+      satrecs.set(id, satrec);
+      followed = {
+        id,
+        name: satname || name || `Sat #${id}`,
+        satrec,
+        periodMin: (2 * Math.PI) / satrec.no,
+        inc: satrec.inclo * 180 / Math.PI,
+        pass: null
+      };
+      followSphere.visible = true;
+
+      if (followLabel) { scene.remove(followLabel); followLabel.material.map.dispose(); followLabel.material.dispose(); }
+      followLabel = makeLabel(followed.name);
+      scene.add(followLabel);
+
+      // Frame the satellite: pivot the camera on it, looking in from outside.
+      const p0 = propagate(satrec, new Date());
+      if (p0) {
+        const v0 = latLngToVec(p0.lat, p0.lng, R + p0.alt * KM);
+        followSphere.position.copy(v0);
+        controls._target.copy(v0);
+        if (!wasFollowing) {           // fresh lock: frame from outside at default zoom
+          controls.setFromVec(v0.clone().normalize());
+          // Lock off pivots on Earth's centre, so the locked distance (70) would
+          // put the camera inside the globe (radius 100) — use the globe distance.
+          controls._r = EL.lock.checked ? 70 : 300;
+        }                              // else: hop to the new sat, keep the user's zoom + angle
+      }
+
+      buildOrbit();
+      syncAutoBtn();           // grey out auto-rotate while locked
+      showInfo();
+      refreshPass();           // predict the next overhead pass
+      loadFrequencies(id);
+      syncFavBtn();            // reflect whether this satellite is favorited
+      setStatus(`Following <b>${escapeHtml(followed.name)}</b>`);
+    } catch (e) {
+      setStatus("⚠ " + escapeHtml(e.message), true);
+    }
+  }
+
+  function buildOrbit() {
+    if (!followed) return;
+    const pts = [];
+    const now = Date.now();
+    // Two modes (toggle): closed orbit vs ground track.
+    //  • Orbit (default): one fixed GMST for every sample freezes Earth's
+    //    orientation at 'now', so the inertial (closed) orbit maps to a closed
+    //    loop passing through the satellite's current position.
+    //  • Ground track: each sample's own GMST bakes in Earth's rotation, drawing
+    //    the path over the spinning Earth, which spirals ~22°/orbit and is open.
+    const groundTrack = EL.track.checked;
+    const fixedGmst = satellite.gstime(new Date(now));
+    const step = (followed.periodMin * 60000) / 180;
+    for (let i = 0; i <= 180; i++) {
+      const date = new Date(now + i * step);
+      const pv = satellite.propagate(followed.satrec, date);
+      if (!pv.position) continue;
+      const gmst = groundTrack ? satellite.gstime(date) : fixedGmst; // per-sample vs fixed
+      const geo = satellite.eciToGeodetic(pv.position, gmst);
+      pts.push(latLngToVec(
+        satellite.degreesLat(geo.latitude),
+        satellite.degreesLong(geo.longitude),
+        R + geo.height * KM
+      ));
+    }
+    if (orbitLine) { scene.remove(orbitLine); orbitLine.geometry.dispose(); orbitLine.material.dispose(); }
+    orbitLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffcc4d, transparent: true, opacity: 0.55 })
+    );
+    scene.add(orbitLine);
+  }
+
+  // =========================================================================
+  // Info panel & frequencies
+  // =========================================================================
+  const info = document.getElementById("info");
+  const freqEl = document.getElementById("i-freq");
+  document.getElementById("stop").onclick = stopFollowing;
+  function showInfo() { info.style.display = "block"; }
+
+  function stopFollowing() {
+    followed = null;
+    followSphere.visible = false;
+    info.style.display = "none";
+    if (orbitLine) { scene.remove(orbitLine); orbitLine.geometry.dispose(); orbitLine.material.dispose(); orbitLine = null; }
+    if (followLabel) { scene.remove(followLabel); followLabel.material.map.dispose(); followLabel.material.dispose(); followLabel = null; }
+    // Return to a globe view and re-enable the auto-rotate toggle.
+    controls._target.set(0, 0, 0);
+    controls._r = 300;
+    syncAutoBtn();
+    setStatus(`<b>${cloud.length}</b> satellites overhead`);
+  }
+
+  const fmtMHz = hz => (hz == null ? null : (hz / 1e6).toFixed(4) + " MHz");
+  // Doppler offset for display, e.g. "+7.6 kHz" / "−7.6 kHz" (real minus sign).
+  const fmtDelta = hz => (hz >= 0 ? "+" : "−") + (Math.abs(hz) / 1e3).toFixed(1) + " kHz";
+  // Which source a transmitter row came from (shown as a small tag).
+  const srcLabel = s => ({ satnogs: "SatNOGS", je9pel: "JE9PEL" }[s] || s);
+  async function loadFrequencies(id) {
+    freqEl.innerHTML = '<span class="muted">Loading frequencies…</span>';
+    if (followed) followed.freqRows = null;   // detach old rows during the fetch
+    try {
+      // The name enables the server's SatNOGS name fallback (null-NORAD entries).
+      const name = followed ? followed.name : "";
+      const r = await fetch(`/api/frequencies/${id}/${encodeURIComponent(name)}`);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      const list = Array.isArray(data) ? data : (data.results || []);
+      if (!followed || followed.id !== id) return;
+      renderFrequencies(list);   // server already resolved a single satellite's set
+    } catch (e) {
+      freqEl.innerHTML = `<span class="muted">Couldn't load frequencies (${escapeHtml(e.message)}).</span>`;
+    }
+  }
+  // Build the transmitter list ONCE, then keep references to each frequency's
+  // value/delta nodes on followed.freqRows so the animate loop can rewrite them
+  // in place (updateDoppler) without an innerHTML rebuild — which would reset the
+  // user's scroll position in the list and throw away their place mid-pass.
+  function renderFrequencies(list) {
+    if (!followed) return;
+    followed.freqRows = [];
+    if (!list.length) {
+      freqEl.innerHTML = '<span class="muted">No frequency data in the SatNOGS database for this satellite.</span>';
+      return;
+    }
+    list.sort((a, b) => (b.alive === true) - (a.alive === true));
+    freqEl.innerHTML = list.map(t => {
+      const alive = t.alive === true;
+      const hasDown = t.downlink_low != null, hasUp = t.uplink_low != null, hasBeacon = t.beacon_low != null;
+      const lines = [];
+      if (hasDown)   lines.push(`<div class="down-row">Downlink: <b class="freq-val"></b><span class="freq-delta"></span></div>`);
+      if (hasUp)     lines.push(`<div class="up-row">Uplink: <b class="freq-val"></b><span class="freq-delta"></span></div>`);
+      if (hasBeacon) lines.push(`<div class="beacon-row">Beacon: <b class="freq-val"></b><span class="freq-delta"></span></div>`);
+      if (!hasDown && !hasUp && !hasBeacon) lines.push(`<div class="muted">No frequency listed</div>`);
+      const mode = t.mode ? ` · ${escapeHtml(t.mode)}` : "";
+      const src = t.source ? `<span class="src">${escapeHtml(srcLabel(t.source))}</span>` : "";
+      return `<div class="freq-item${alive ? "" : " dead"}">
+          <div class="desc"><b>${escapeHtml(t.description || "Transmitter")}${mode}</b>
+          <span class="tags">${src}<span class="tag${alive ? "" : " off"}">${alive ? "active" : "inactive"}</span></span></div>
+          <div class="lines">${lines.join("")}</div></div>`;
+    }).join("");
+    // Capture node references in list order (each .freq-item maps to one transmitter).
+    const items = freqEl.querySelectorAll(".freq-item");
+    list.forEach((t, i) => {
+      const down = items[i].querySelector(".down-row"), up = items[i].querySelector(".up-row"), beacon = items[i].querySelector(".beacon-row");
+      followed.freqRows.push({
+        downHz: t.downlink_low ?? null, upHz: t.uplink_low ?? null, beaconHz: t.beacon_low ?? null,
+        downNode: down && down.querySelector(".freq-val"), downDelta: down && down.querySelector(".freq-delta"),
+        upNode:   up   && up.querySelector(".freq-val"),   upDelta:   up   && up.querySelector(".freq-delta"),
+        beaconNode: beacon && beacon.querySelector(".freq-val"), beaconDelta: beacon && beacon.querySelector(".freq-delta")
+      });
+    });
+    updateDoppler(null, false);   // paint nominal values immediately
+  }
+
+  // Rewrite each transmitter's displayed frequency to the value you'd tune to.
+  // Downlink is RECEIVED → shift by (1 − rᵣ/c); uplink is TRANSMITTED → shift the
+  // opposite way (1 + rᵣ/c) so the satellite still hears the right frequency.
+  // Below the horizon (or before a range-rate exists) show the plain nominal.
+  function updateDoppler(rangeRateKms, aboveHorizon) {
+    if (!followed || !followed.freqRows) return;
+    const live = aboveHorizon && rangeRateKms != null;
+    const factor = live ? rangeRateKms / C_KMS : 0;   // rᵣ/c
+    for (const row of followed.freqRows) {
+      if (row.downNode) {
+        const f = live ? row.downHz * (1 - factor) : row.downHz;
+        row.downNode.textContent = fmtMHz(f);
+        row.downDelta.textContent = live ? "  " + fmtDelta(f - row.downHz) : "";
+      }
+      if (row.upNode) {
+        const f = live ? row.upHz * (1 + factor) : row.upHz;
+        row.upNode.textContent = fmtMHz(f);
+        row.upDelta.textContent = live ? "  " + fmtDelta(f - row.upHz) : "";
+      }
+      if (row.beaconNode) {                        // a beacon is received → shifts like the downlink
+        const f = live ? row.beaconHz * (1 - factor) : row.beaconHz;
+        row.beaconNode.textContent = fmtMHz(f);
+        row.beaconDelta.textContent = live ? "  " + fmtDelta(f - row.beaconHz) : "";
+      }
+    }
+  }
+
+  // ---- Next-pass display ---------------------------------------------------
+  function fmtCountdown(ms) {
+    if (ms <= 0) return "now";
+    const s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m ${sec}s`;
+    if (m) return `${m}m ${String(sec).padStart(2, "0")}s`;
+    return `${sec}s`;
+  }
+  function renderPass() {
+    const p = followed && followed.pass;
+    if (!p) {
+      EL.npTime.textContent = followed
+        ? `No pass above 10° in the next ${PASS_HORIZONS[passHorizonIdx].label}`
+        : "—";
+      EL.npEta.textContent = EL.npDist.textContent = EL.npElev.textContent = "—";
+      return;
+    }
+    EL.npTime.textContent = new Date(p.tMs).toLocaleString(undefined, {
+      weekday: "short", day: "numeric", month: "short",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    EL.npDist.textContent = p.rangeKm.toFixed(0) + " km";
+    EL.npElev.textContent = p.elevDeg.toFixed(0) + "°";
+    updatePassEta();
+  }
+  function updatePassEta() {
+    const p = followed && followed.pass;
+    if (p) EL.npEta.textContent = fmtCountdown(p.tMs - Date.now());
+  }
+
+  // =========================================================================
+  // Animation loop
+  // =========================================================================
+  const EL = {
+    name: document.getElementById("i-name"), id: document.getElementById("i-id"),
+    lat: document.getElementById("i-lat"), lng: document.getElementById("i-lng"),
+    alt: document.getElementById("i-alt"), spd: document.getElementById("i-spd"),
+    per: document.getElementById("i-per"), inc: document.getElementById("i-inc"),
+    head: document.getElementById("i-head"), el: document.getElementById("i-el"),
+    npTime: document.getElementById("np-time"), npEta: document.getElementById("np-eta"),
+    npDist: document.getElementById("np-dist"), npElev: document.getElementById("np-elev"),
+    npRange: document.getElementById("np-range"), npHorizon: document.getElementById("np-horizon"),
+    lock: document.getElementById("lockcam"), track: document.getElementById("groundtrack")
+  };
+  let lastInfo = 0, lastOrbit = 0, lastCloud = 0, lastPassRoll = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const tnow = Date.now();
+    // Animate the whole cloud client-side at ~5 Hz (smooth at globe scale, no API).
+    if (tnow - lastCloud > 200) { lastCloud = tnow; propagateCloud(tnow); }
+
+    if (followed) {
+      const now = Date.now();
+      const p = propagate(followed.satrec, new Date(now));
+      if (p) {
+        const v = latLngToVec(p.lat, p.lng, R + p.alt * KM);
+        followSphere.position.copy(v);
+        // Scale sphere + label to a roughly constant apparent screen size:
+        // world size tracks the camera→sat distance (no lower bound, or the
+        // marker/label would balloon on screen when zoomed in and the name's
+        // letters would spill off the window), capped above so it doesn't grow
+        // huge when zoomed all the way out. Keyed to the true camera→sat
+        // distance so it's correct whether or not the lock is on.
+        const dist = camera.position.distanceTo(v);
+        const screenScale = Math.min(dist / 70, 2.0);
+        followSphere.scale.setScalar(screenScale);
+        if (followLabel) {
+          followLabel.position.copy(v);
+          const b = followLabel.userData.baseScale; // keep label aspect ratio (setScalar would squash it)
+          followLabel.scale.set(b.x * screenScale, b.y * screenScale, 1);
+        }
+
+        if (now - lastInfo > 250) {
+          lastInfo = now;
+          EL.name.textContent = followed.name;
+          EL.id.textContent = "#" + followed.id;
+          EL.lat.textContent = p.lat.toFixed(2) + "°";
+          EL.lng.textContent = p.lng.toFixed(2) + "°";
+          EL.alt.textContent = p.alt.toFixed(0) + " km";
+          EL.spd.textContent = p.vel ? (p.vel.toFixed(2) + " km/s") : "—";
+          EL.per.textContent = followed.periodMin.toFixed(1) + " min";
+          EL.inc.textContent = followed.inc.toFixed(1) + "°";
+          // Compass heading + elevation from the observer to the satellite (az/el).
+          const gd = observerGd();
+          const look = lookAt(followed.satrec, gd, new Date(now));
+          if (look) {
+            const az = look.azimuth   * 180 / Math.PI;   // 0..360, 0 = North, clockwise
+            const el = look.elevation * 180 / Math.PI;   // -90..90 (negative = below horizon)
+            EL.head.textContent = `${String(Math.round(az) % 360).padStart(3, "0")}° ${compass(az)}`;
+            EL.el.textContent   = el >= 0 ? el.toFixed(0) + "° up" : el.toFixed(0) + "° (below horizon)";
+            // Live Doppler: correct the displayed frequencies by the current
+            // range-rate, but only while the satellite is above the horizon.
+            updateDoppler(rangeRate(followed.satrec, gd, new Date(now)), el >= 0);
+          } else {
+            EL.head.textContent = EL.el.textContent = "—";
+            updateDoppler(null, false);
+          }
+          updatePassEta();   // tick the countdown
+        }
+        // Once a predicted pass elapses, roll forward to the next one
+        // (throttled so an always-overhead sat can't recompute every frame).
+        if (followed.pass && now > followed.pass.tMs && now - lastPassRoll > 10000) {
+          lastPassRoll = now;
+          refreshPass();
+        }
+        // Pivot the camera on the satellite when locked (you orbit it freely),
+        // otherwise keep the pivot at Earth's centre.
+        controls._target.lerp(EL.lock.checked ? v : ORIGIN, 0.15);
+        if (now - lastOrbit > 30000) { lastOrbit = now; buildOrbit(); }
+      }
+    }
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  // =========================================================================
+  // Boot
+  // =========================================================================
+  // Debounce control changes so toggling doesn't fire several /above calls.
+  let cloudTimer = null;
+  // ---- Remember settings (consent-gated) ----------------------------------
+  // Preference storage is only written/read after the user clicks Accept. The
+  // orbit (TLE) cache is strictly necessary and stays on regardless. See
+  // /privacy.html.
+  const CONSENT_KEY = "ham:consent", SETTINGS_KEY = "ham:settings";
+  const consent   = () => { try { return localStorage.getItem(CONSENT_KEY); } catch (e) { return null; } };
+  const consented = () => consent() === "accepted";
+
+  function saveSettings() {
+    if (!consented()) return;
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        hide: [...hideSet],
+        category: document.getElementById("category").value,
+        radius:   document.getElementById("radius").value,
+        lock:     EL.lock.checked,
+        groundtrack: EL.track.checked,
+        passHorizon: passHorizonIdx,
+        remindLead: getRemindLead()
+      }));
+    } catch (e) {}
+  }
+  function loadSettings() {
+    if (!consented()) return;
+    let s; try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); } catch (e) {}
+    if (!s) return;
+    if (Array.isArray(s.hide)) {
+      hideSet.clear(); s.hide.forEach(k => hideSet.add(k));
+      applyHideUI();        // reflect the saved set onto the menu switches + master
+    }
+    if (s.category != null) document.getElementById("category").value = s.category;
+    if (s.radius   != null) document.getElementById("radius").value   = s.radius;
+    if (typeof s.lock === "boolean")        EL.lock.checked  = s.lock;
+    if (typeof s.groundtrack === "boolean") EL.track.checked = s.groundtrack;
+    if (Number.isInteger(s.passHorizon) && s.passHorizon >= 0 && s.passHorizon < PASS_HORIZONS.length) {
+      passHorizonIdx = s.passHorizon; applyHorizon();
+    }
+    if (Number.isFinite(s.remindLead)) remindLeadEl.value = clampLead(s.remindLead);
+  }
+
+  const scheduleRefresh = () => { clearTimeout(cloudTimer); cloudTimer = setTimeout(refreshCloud, 400); };
+  document.getElementById("category").onchange = () => { saveSettings(); scheduleRefresh(); };
+  document.getElementById("radius").onchange = () => { saveSettings(); scheduleRefresh(); };
+
+  // Hide-groups menu — collapsible accordion built from EXCLUDERS (single source
+  // of truth). Toggling re-filters the cached cloud locally (no /above re-fetch).
+  const hideHeader = document.getElementById("hide-header");
+  const hideBody   = document.getElementById("hide-body");
+  const hideList   = document.getElementById("hide-list");
+  const hideCount  = document.getElementById("hide-count");
+  const hideAll    = document.getElementById("hide-all");
+
+  // One sleek on/off switch per excluder group.
+  hideList.innerHTML = EXCLUDERS.map(e =>
+    `<label class="toggle"><input type="checkbox" data-hide="${e.key}" /> ${escapeHtml(e.label)}</label>`
+  ).join("");
+
+  // Reflect the master switch + count from hideSet (checked = all hidden,
+  // indeterminate = some hidden).
+  function syncMaster() {
+    const on = hideSet.size, total = EXCLUDERS.length;
+    hideAll.checked = on === total;
+    hideAll.indeterminate = on > 0 && on < total;
+    hideCount.textContent = on ? `· ${on}` : "";
+  }
+  // Reflect hideSet onto every individual switch (used on load + master toggle).
+  function applyHideUI() {
+    hideList.querySelectorAll("input[data-hide]").forEach(cb => cb.checked = hideSet.has(cb.dataset.hide));
+    syncMaster();
+  }
+
+  hideList.addEventListener("change", e => {
+    const cb = e.target;
+    if (!cb.dataset || !cb.dataset.hide) return;
+    cb.checked ? hideSet.add(cb.dataset.hide) : hideSet.delete(cb.dataset.hide);
+    syncMaster();
+    applyCloudFilter();
+    saveSettings();
+  });
+
+  hideAll.addEventListener("change", () => {
+    hideSet.clear();
+    if (hideAll.checked) EXCLUDERS.forEach(e => hideSet.add(e.key));
+    applyHideUI();          // mirror onto the individual switches
+    applyCloudFilter();
+    saveSettings();
+  });
+
+  hideHeader.addEventListener("click", () => {
+    const open = hideBody.classList.toggle("open");
+    hideHeader.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  syncMaster();             // initial empty state (overwritten by loadSettings if consented)
+
+  // =========================================================================
+  // Favorites & pass reminders
+  // =========================================================================
+  // A starred shortlist of satellites (persisted like settings, consent-gated).
+  // Reminder-enabled favorites fire an in-page browser notification shortly before
+  // they next rise above MIN_ELEV_DEG over the observer. Entirely client-side: pass
+  // times are computed locally and nothing about favorites leaves the browser.
+  const FAVORITES_KEY = "ham:favorites";
+  let favorites = [];                  // [{ id, name, remind }]
+  const notifiedPass = new Map();      // id -> rise time we last notified (de-dupe)
+  const favRise = new Map();           // id -> next rise ms (or null); refreshed per tick
+  const favListEl    = document.getElementById("fav-list");
+  const favCountEl   = document.getElementById("fav-count");
+  const favHeader    = document.getElementById("fav-header");
+  const favBody      = document.getElementById("fav-body");
+  const favBtn       = document.getElementById("fav-btn");
+  const remindLeadEl = document.getElementById("remind-lead");
+
+  const clampLead = v => Math.min(1440, Math.max(1, Math.round(Number(v) || 10)));
+  function getRemindLead() { return clampLead(remindLeadEl.value); }
+
+  function saveFavorites() {
+    if (!consented()) return;          // same gate as settings; session-only otherwise
+    try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites)); } catch (e) {}
+  }
+  function loadFavorites() {
+    if (!consented()) return;
+    let f; try { f = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "null"); } catch (e) {}
+    if (Array.isArray(f)) {
+      favorites = f
+        .filter(x => x && Number.isFinite(+x.id) && typeof x.name === "string")
+        .map(x => ({ id: +x.id, name: x.name, remind: !!x.remind }));
+    }
+  }
+
+  const isFav = id => favorites.some(f => f.id === +id);
+  function addFav(id, name) {
+    if (isFav(id)) return;
+    favorites.push({ id: +id, name: name || ("Sat #" + id), remind: false });
+    queueTLEs([+id]);                  // load its orbit so pass times can be computed
+    saveFavorites(); renderFavorites(); syncFavBtn();
+  }
+  function removeFav(id) {
+    favorites = favorites.filter(f => f.id !== +id);
+    notifiedPass.delete(+id); favRise.delete(+id);
+    saveFavorites(); renderFavorites(); syncFavBtn();
+  }
+  function setRemind(id, on) {
+    const f = favorites.find(f => f.id === +id);
+    if (!f) return;
+    f.remind = on;
+    if (on) queueTLEs([+id]);
+    notifiedPass.delete(+id);
+    saveFavorites(); renderFavorites();
+  }
+
+  // Follow-panel star button reflects whether the current satellite is a favorite.
+  function syncFavBtn() {
+    if (!favBtn) return;
+    const on = followed && isFav(followed.id);
+    favBtn.textContent = on ? "★ Favorited" : "☆ Add to favorites";
+    favBtn.classList.toggle("faved", !!on);
+  }
+  favBtn.onclick = () => {
+    if (!followed) return;
+    isFav(followed.id) ? removeFav(followed.id) : addFav(followed.id, followed.name);
+  };
+
+  // Recompute each favorite's next rise (once per tick; reused by the list + alerts).
+  function refreshFavRises() {
+    const now = Date.now();
+    for (const f of favorites) {
+      const rec = satrecs.get(f.id);
+      favRise.set(f.id, rec ? nextRise(rec, now) : undefined);  // undefined = orbit not loaded yet
+    }
+  }
+  function favEtaText(f) {
+    const rise = favRise.get(f.id);
+    if (rise === undefined) return "…";
+    if (rise === null) return "no pass 24h";
+    return "in " + fmtCountdown(rise - Date.now());
+  }
+
+  function renderFavorites() {
+    refreshFavRises();        // keep each row's ETA current (cheap for a short list)
+    favCountEl.textContent = favorites.length ? "· " + favorites.length : "";
+    if (!favorites.length) {
+      favListEl.innerHTML = '<div class="fav-empty">No favorites yet — follow a satellite and tap ★.</div>';
+      return;
+    }
+    favListEl.innerHTML = favorites.map(f => `
+      <div class="fav-row" data-id="${f.id}">
+        <span class="fav-name" data-act="follow" title="Follow">${escapeHtml(f.name)}</span>
+        <span class="fav-eta">${escapeHtml(favEtaText(f))}</span>
+        <button class="fav-icon-btn fav-bell${f.remind ? " on" : ""}" data-act="bell"
+                title="${f.remind ? "Reminder on — click to turn off" : "Remind me before a pass"}"
+                aria-pressed="${f.remind ? "true" : "false"}">${f.remind ? "🔔" : "🔕"}</button>
+        <button class="fav-icon-btn fav-x" data-act="remove" title="Remove">✕</button>
+      </div>`).join("");
+  }
+
+  // Delegated clicks: follow / toggle reminder / remove.
+  favListEl.addEventListener("click", e => {
+    const row = e.target.closest(".fav-row");
+    if (!row) return;
+    const id = +row.dataset.id;
+    const act = e.target.dataset.act;
+    if (act === "follow") { const f = favorites.find(f => f.id === id); if (f) followSatellite(f.id, f.name); }
+    else if (act === "remove") removeFav(id);
+    else if (act === "bell") {
+      const f = favorites.find(f => f.id === id);
+      if (f) (f.remind ? setRemind(id, false) : requestReminder(id));
+    }
+  });
+
+  favHeader.addEventListener("click", () => {
+    const open = favBody.classList.toggle("open");
+    favHeader.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  remindLeadEl.addEventListener("change", () => { remindLeadEl.value = getRemindLead(); saveSettings(); });
+
+  // ---- Notifications -------------------------------------------------------
+  // Turning on a reminder needs notification permission. Ask on this user gesture;
+  // if it isn't granted, leave the reminder off and explain via a toast.
+  function requestReminder(id) {
+    if (!("Notification" in window)) { showToast("This browser doesn't support notifications."); return; }
+    if (Notification.permission === "granted") { setRemind(id, true); return; }
+    if (Notification.permission === "denied") {
+      showToast("Notifications are blocked — enable them in your browser settings."); return;
+    }
+    Notification.requestPermission().then(p => {
+      if (p === "granted") setRemind(id, true);
+      else showToast("Reminder needs notification permission.");
+    });
+  }
+
+  // Periodic check: fire one notification per reminder-favorite once its next rise
+  // is within the lead window; also refreshes the list's ETA text.
+  function checkReminders() {
+    renderFavorites();        // also refreshes each favorite's next-rise (favRise)
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const now = Date.now();
+    const leadMs = getRemindLead() * 60000;
+    const gd = observerGd();
+    for (const f of favorites) {
+      if (!f.remind) continue;
+      const rec = satrecs.get(f.id);
+      const rise = favRise.get(f.id);
+      if (!rec || rise == null) continue;
+      const dt = rise - now;
+      // De-dupe per pass. nextRise refines to ~1 s, so the value jitters slightly
+      // between ticks — treat any rise within 2 min of the last-notified one as the
+      // same pass (distinct passes are far more than 2 min apart).
+      const last = notifiedPass.get(f.id);
+      if (dt > 0 && dt <= leadMs && (last == null || Math.abs(rise - last) > 120000)) {
+        notifiedPass.set(f.id, rise);
+        const mins = Math.max(1, Math.round(dt / 60000));
+        const look = lookAt(rec, gd, new Date(rise + 30000));   // just after the rise
+        const dir = look ? " to the " + compass(look.azimuth * 180 / Math.PI) : "";
+        try {
+          const n = new Notification("🛰 " + f.name, {
+            body: `Rising above ${MIN_ELEV_DEG}° over you in ~${mins} min${dir}.`,
+            tag: "ham-pass-" + f.id
+          });
+          n.onclick = () => { window.focus(); followSatellite(f.id, f.name); n.close(); };
+        } catch (e) {}
+      }
+    }
+  }
+  setInterval(checkReminders, 30000);
+  renderFavorites();        // initial (empty) render; loadFavorites fills it at boot
+
+  // Next-pass look-ahead slider: update the label instantly, debounce the recompute.
+  function applyHorizon() {
+    EL.npRange.value = passHorizonIdx;
+    EL.npHorizon.textContent = "in the next " + PASS_HORIZONS[passHorizonIdx].label;
+  }
+  let horizonTimer = null;
+  EL.npRange.addEventListener("input", () => {
+    passHorizonIdx = +EL.npRange.value;
+    EL.npHorizon.textContent = "in the next " + PASS_HORIZONS[passHorizonIdx].label;
+    clearTimeout(horizonTimer);
+    horizonTimer = setTimeout(() => { if (followed) refreshPass(); saveSettings(); }, 250);
+  });
+  applyHorizon();   // initialise label + slider position
+
+  // ---- Bottom-right camera controls ---------------------------------------
+  const ORIGIN = new THREE.Vector3(0, 0, 0);
+  const autoBtn = document.getElementById("autorotate-btn");
+
+  // Reflect auto-rotate state; grey it out while a satellite is locked.
+  function syncAutoBtn() {
+    autoBtn.disabled = !!followed;
+    autoBtn.classList.toggle("off", !controls.autoRotate || !!followed);
+    autoBtn.textContent = (followed ? "⟳ Auto-rotate (off in lock)" : (controls.autoRotate ? "⟳ Auto-rotate: on" : "⟳ Auto-rotate: off"));
+  }
+  autoBtn.addEventListener("click", () => {
+    if (followed) return;                 // disabled while locked
+    controls.autoRotate = !controls.autoRotate;
+    syncAutoBtn();
+  });
+
+  function resetView() {
+    if (followed) {
+      controls.setFromVec(followSphere.position.clone().normalize());
+      // Match the pivot + distance to the lock state. With the lock off the
+      // pivot is Earth's centre, so the locked distance (70) would drop the
+      // camera inside the globe (radius 100) — use the globe distance instead.
+      if (EL.lock.checked) {
+        controls._target.copy(followSphere.position);
+        controls._r = 70;
+      } else {
+        controls._target.set(0, 0, 0);
+        controls._r = 300;
+      }
+    } else {
+      controls._target.set(0, 0, 0);
+      controls._theta = 0.6; controls._phi = 1.1; controls._r = 300;
+    }
+  }
+
+  const STEP_ROT = 0.03, STEP_ZOOM = 0.97;
+  const ACTIONS = {
+    up:      () => { controls._phi -= STEP_ROT; },
+    down:    () => { controls._phi += STEP_ROT; },
+    left:    () => { controls._theta -= STEP_ROT; },
+    right:   () => { controls._theta += STEP_ROT; },
+    zoomin:  () => { controls._r = clampR(controls._r * STEP_ZOOM); },
+    zoomout: () => { controls._r = clampR(controls._r / STEP_ZOOM); }
+  };
+  let holdTimer = null;
+  function startHold(act) {
+    if (act === "reset") { resetView(); return; }
+    const fn = ACTIONS[act];
+    if (!fn) return;
+    controls._hold = true;
+    fn();
+    holdTimer = setInterval(fn, 16);
+  }
+  function stopHold() { clearInterval(holdTimer); holdTimer = null; controls._hold = false; }
+
+  document.querySelectorAll("#camctl .cam-btn").forEach(btn => {
+    btn.addEventListener("pointerdown", e => { e.preventDefault(); startHold(btn.dataset.act); });
+    btn.addEventListener("pointerup", stopHold);
+    btn.addEventListener("pointerleave", stopHold);
+  });
+  window.addEventListener("pointerup", stopHold);
+
+  // Re-frame when toggling the lock checkbox mid-follow.
+  EL.lock.addEventListener("change", () => {
+    saveSettings();
+    if (!followed) return;
+    controls._r = EL.lock.checked ? 70 : 300;
+  });
+
+  // Redraw the path immediately when switching orbit/ground-track mode.
+  EL.track.addEventListener("change", () => { if (followed) buildOrbit(); saveSettings(); });
+
+  // ---- "About this satellite" Wikipedia popup -----------------------------
+  let toastTimer = null;
+  function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 4000);
+  }
+  const wikiOverlay = document.getElementById("wiki-overlay");
+  function closeWiki() { wikiOverlay.style.display = "none"; }
+  document.getElementById("wiki-close").onclick = closeWiki;
+  wikiOverlay.addEventListener("click", e => { if (e.target === wikiOverlay) closeWiki(); });
+  window.addEventListener("keydown", e => { if (e.key === "Escape") { closeWiki(); hidePicker(); } });
+
+  const wikiBtn = document.getElementById("wiki-btn");
+  wikiBtn.onclick = async () => {
+    if (!followed) return;
+    const label = wikiBtn.textContent;
+    wikiBtn.disabled = true; wikiBtn.textContent = "Loading…";
+    try {
+      const r = await fetch(`/api/wiki/${followed.id}/${encodeURIComponent(followed.name)}`);
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      if (!d.extract) throw 0;
+      // Only accept http(s) URLs from the upstream response (blocks javascript:/data: schemes).
+      const safeImg  = typeof d.thumbnail === "string" && /^https:\/\//i.test(d.thumbnail);
+      const safeLink = typeof d.url === "string" && /^https?:\/\//i.test(d.url);
+      const img = document.getElementById("wiki-img");
+      img.onerror = () => { img.style.display = "none"; };
+      if (safeImg) { img.src = d.thumbnail; img.style.display = "block"; } else { img.removeAttribute("src"); img.style.display = "none"; }
+      document.getElementById("wiki-title").textContent = d.title || followed.name;
+      document.getElementById("wiki-extract").textContent = d.extract;   // textContent → no XSS
+      const link = document.getElementById("wiki-link");
+      link.style.display = safeLink ? "inline-block" : "none";
+      if (safeLink) link.href = d.url; else link.removeAttribute("href");
+      wikiOverlay.style.display = "flex";
+    } catch {
+      showToast("No Wikipedia info available for this satellite.");
+    } finally {
+      wikiBtn.disabled = false; wikiBtn.textContent = label;
+    }
+  };
+
+  syncAutoBtn();
+
+  // ---- Consent banner -----------------------------------------------------
+  const consentBar = document.getElementById("consent");
+  if (!consent()) consentBar.style.display = "flex";
+  document.getElementById("consent-accept").onclick = () => {
+    try { localStorage.setItem(CONSENT_KEY, "accepted"); } catch (e) {}
+    consentBar.style.display = "none";
+    saveSettings();                       // capture current state immediately
+    saveFavorites();                      // persist any favorites starred this session
+  };
+  document.getElementById("consent-decline").onclick = () => {
+    try {
+      localStorage.setItem(CONSENT_KEY, "declined");
+      localStorage.removeItem(SETTINGS_KEY);
+      localStorage.removeItem(FAVORITES_KEY);
+    } catch (e) {}
+    consentBar.style.display = "none";
+  };
+
+  loadSettings();    // apply saved prefs (if consented) before the first cloud load
+  loadFavorites();   // restore the favorites shortlist (if consented)
+  renderFavorites(); // paint it (and the count)
+  queueTLEs(favorites.map(f => f.id));   // warm orbits so pass times populate
+  syncFavBtn();
+  checkReminders();  // compute initial ETAs / fire any already-due alert
+
+  (async function start() {
+    setStatus("Finding your location…");
+    animate();
+    await useGeolocation();
+    // /above is limited to 100/hour — refresh membership only every 5 min (~12/hour).
+    setInterval(refreshCloud, 300000);
+  })();
+  } catch (err) {
+    showErr((err && err.stack ? err.stack.split("\n").slice(0, 3).join("  ·  ") : (err && err.message) || err));
+    console.error("HAM module error:", err);
+  }
+  </script>
+</body>
+</html>

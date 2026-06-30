@@ -1,0 +1,13 @@
+{
+  "name": "ham",
+  "version": "1.0.0",
+  "description": "Interactive 3D globe that plots satellites in orbit using the n2yo API. Search, jump to, and follow any satellite.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
