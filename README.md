@@ -33,8 +33,42 @@ You only need Node 18 or newer installed.
 
    On the first start, the server downloads its front-end libraries (three.js, satellite.js) and the globe textures into `public/vendor/` and serves them from there afterwards. That means the app has no runtime dependency on any CDN: after the first run it works fully offline, apart from the live n2yo and SatNOGS data, which is inherently remote. So the first run needs internet, which it already does for the satellite data anyway.
 
-4. **Open** <http://localhost:3000> in your browser.
+4. **Open** <http://localhost:10489> in your browser.
    Allow location access when prompted so the overhead view is centered on you. It falls back to 0°, 0° otherwise.
+
+## Running with Docker
+
+If you don't want to install Node yourself, or you just want this running on a spare
+machine on your network, a container works just as well.
+
+1. **Get your key ready.** Same first step as above: copy `.env.example` to `.env` and
+   set `N2YO_API_KEY=...`.
+
+2. **Build and start it.**
+   ```bash
+   docker compose up --build -d
+   ```
+   The build step fetches the front-end libraries and globe textures once and bakes
+   them into the image, so the container starts right away every time after that and
+   doesn't need internet at runtime beyond the live satellite data.
+
+3. **Open it.** <http://localhost:10489> on the machine running it, or
+   `http://<that machine's LAN IP>:10489` from any other device on your network.
+
+If you'd rather skip compose, this is the same thing by hand:
+```bash
+docker build -t ham .
+docker run -d --name ham -p 10489:10489 --env-file .env ham
+```
+
+If you change `PORT` in `.env`, update the port mapping (`10489:10489` above) to match.
+
+If the globe or textures ever look wrong, rebuild without the cache to force a clean
+re-download: `docker build --no-cache -t ham .`
+
+The container has the same security posture described below: no built-in auth on the
+`/api/*` proxy, so keep it on a network you trust rather than exposing it to the wider
+internet.
 
 ## How it works
 

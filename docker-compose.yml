@@ -1,0 +1,9 @@
+services:
+  ham:
+    build: .
+    container_name: ham
+    ports:
+      - "10489:10489"
+    env_file:
+      - .env
+    restart: unless-stopped
