@@ -2,6 +2,8 @@
 
 An interactive 3D globe that plots live satellites in orbit using the [n2yo API](https://www.n2yo.com/api/). Search for a satellite, jump to it, and follow it while its orbit path is drawn in real time.
 
+HAM is meant to run on your own network, for yourself or your household. It's not built to be a shared, multi-user, or public-facing service.
+
 ## Features
 
 - **3D globe.** A GPU-rendered three.js globe with earth textures and a star background. Satellites are drawn as a single GPU point cloud, so it stays smooth even with thousands of objects on screen.
@@ -13,7 +15,9 @@ An interactive 3D globe that plots live satellites in orbit using the [n2yo API]
 
 ## Setup
 
-You only need Node 18 or newer installed.
+### With Docker (recommended)
+
+You only need Docker installed, not Node.
 
 1. **Get a free n2yo API key.**
    Register at <https://www.n2yo.com/api/>. Once you sign in, your API key is shown in your account.
@@ -25,50 +29,45 @@ You only need Node 18 or newer installed.
    ```
    Then edit `.env` and set `N2YO_API_KEY=...`
 
-3. **Run it.**
+3. **Start it.**
+   ```bash
+   docker compose up -d
+   ```
+   This pulls the published image from GitHub's container registry and runs it. No build step, no Dockerfile needed on your machine.
+
+4. **Open** <http://localhost:10489> in your browser, or `http://<your machine's LAN IP>:10489` from another device on your network.
+   Allow location access when prompted so the overhead view is centered on you. It falls back to 0°, 0° otherwise.
+
+If you'd rather skip compose, this is the same thing by hand:
+```bash
+docker pull ghcr.io/shaunhanrahan/ham:latest
+docker run -d --name ham -p 10489:10489 --env-file .env ghcr.io/shaunhanrahan/ham:latest
+```
+
+If you change `PORT` in `.env`, update the port mapping (`10489:10489` above) to match.
+
+If you've cloned this repo and want to run your own changes instead of the published image, build and tag it yourself first, and compose will use that instead of pulling:
+```bash
+docker build -t ghcr.io/shaunhanrahan/ham:latest .
+docker compose up -d
+```
+If the globe or textures ever look wrong in your own build, rebuild without the cache to force a clean re-download: `docker build --no-cache -t ghcr.io/shaunhanrahan/ham:latest .`
+
+### Without Docker
+
+All you need is Node 18 or newer.
+
+1. Get a key and set up your `.env` file the same way as steps 1 and 2 above.
+2. Run it:
    ```bash
    npm start
    ```
    (or just `node server.js`)
 
-   On the first start, the server downloads its front-end libraries (three.js, satellite.js) and the globe textures into `public/vendor/` and serves them from there afterwards. That means the app has no runtime dependency on any CDN: after the first run it works fully offline, apart from the live n2yo and SatNOGS data, which is inherently remote. So the first run needs internet, which it already does for the satellite data anyway.
+   On the first start, the server downloads its front-end libraries and the globe textures into `public/vendor/` and serves them from there afterwards. That means the app has no runtime dependency on any CDN: after the first run it works fully offline, apart from the live n2yo and SatNOGS data, which is inherently remote. So the first run needs internet, which it already does for the satellite data anyway.
+3. Open <http://localhost:10489> in your browser and allow location access when prompted, same as above.
 
-4. **Open** <http://localhost:10489> in your browser.
-   Allow location access when prompted so the overhead view is centered on you. It falls back to 0°, 0° otherwise.
-
-## Running with Docker
-
-If you don't want to install Node yourself, or you just want this running on a spare
-machine on your network, a container works just as well.
-
-1. **Get your key ready.** Same first step as above: copy `.env.example` to `.env` and
-   set `N2YO_API_KEY=...`.
-
-2. **Build and start it.**
-   ```bash
-   docker compose up --build -d
-   ```
-   The build step fetches the front-end libraries and globe textures once and bakes
-   them into the image, so the container starts right away every time after that and
-   doesn't need internet at runtime beyond the live satellite data.
-
-3. **Open it.** <http://localhost:10489> on the machine running it, or
-   `http://<that machine's LAN IP>:10489` from any other device on your network.
-
-If you'd rather skip compose, this is the same thing by hand:
-```bash
-docker build -t ham .
-docker run -d --name ham -p 10489:10489 --env-file .env ham
-```
-
-If you change `PORT` in `.env`, update the port mapping (`10489:10489` above) to match.
-
-If the globe or textures ever look wrong, rebuild without the cache to force a clean
-re-download: `docker build --no-cache -t ham .`
-
-The container has the same security posture described below: no built-in auth on the
-`/api/*` proxy, so keep it on a network you trust rather than exposing it to the wider
-internet.
+Either way you run it, the security posture is the same: no built-in auth on the `/api/*` proxy, so keep it on a network you trust rather than exposing it to the wider internet (more on that in Security & deployment below).
 
 ## How it works
 

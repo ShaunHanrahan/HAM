@@ -1,6 +1,6 @@
 services:
   ham:
-    build: .
+    image: ghcr.io/shaunhanrahan/ham:latest
     container_name: ham
     ports:
       - "10489:10489"
