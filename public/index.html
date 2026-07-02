@@ -753,10 +753,20 @@
         setReadout("Geolocation unavailable — using 0°, 0°.");
         refreshCloud(); return resolve();
       }
+      if (!window.isSecureContext) {
+        setReadout("Location needs HTTPS or localhost — click 🌐 Coordinates to enter it manually, using 0°, 0° for now.");
+        refreshCloud(); return resolve();
+      }
       setReadout("Finding your location…");
       navigator.geolocation.getCurrentPosition(
         pos => { setObserver(pos.coords.latitude, pos.coords.longitude, "My location"); resolve(); },
-        () => { setReadout("Location denied — using 0°, 0°."); refreshCloud(); resolve(); },
+        err => {
+          const msg = err.code === 3 ? "Location timed out — using 0°, 0°."
+            : err.code === 2 ? "Location unavailable — using 0°, 0°."
+            : "Location denied — using 0°, 0°.";
+          setReadout(msg);
+          refreshCloud(); resolve();
+        },
         { timeout: 7000 }
       );
     });

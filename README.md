@@ -36,7 +36,7 @@ You only need Docker installed, not Node.
    This pulls the published image from GitHub's container registry and runs it. No build step, no Dockerfile needed on your machine.
 
 4. **Open** <http://localhost:10489> in your browser, or `http://<your machine's LAN IP>:10489` from another device on your network.
-   Allow location access when prompted so the overhead view is centered on you. It falls back to 0°, 0° otherwise.
+   Allow location access when prompted so the overhead view is centered on you. Browsers only show that prompt on HTTPS or on localhost, so opening this from another device over plain HTTP (the normal case on a LAN) won't ask, and it falls back to 0°, 0°. Click 🌐 Coordinates in the app and enter your latitude and longitude instead.
 
 If you'd rather skip compose, this is the same thing by hand:
 ```bash
