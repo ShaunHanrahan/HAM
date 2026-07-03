@@ -650,6 +650,34 @@
   }
   const dotTex = makeDotTexture();
 
+  // Flat map-pin (teardrop) texture for the observer marker.
+  function makePinTexture() {
+    const W = 96, H = 128, DPR = 2;   // portrait; 2× for crispness when zoomed in
+    const c = document.createElement("canvas");
+    c.width = W * DPR; c.height = H * DPR;
+    const g = c.getContext("2d");
+    g.scale(DPR, DPR);
+    const cx = W / 2, r = 30, cyH = r + 8, tipY = H - 6;
+    // teardrop: tip at the bottom, bulb (semicircle) over the top
+    g.beginPath();
+    g.moveTo(cx, tipY);
+    g.lineTo(cx - r, cyH);
+    g.arc(cx, cyH, r, Math.PI, 2 * Math.PI, false); // left -> top -> right
+    g.lineTo(cx, tipY);
+    g.closePath();
+    g.fillStyle = "#ea4335";
+    g.fill();
+    g.lineJoin = "round";
+    g.lineWidth = 4;
+    g.strokeStyle = "rgba(0,0,0,0.55)";             // outline for contrast over land/ocean
+    g.stroke();
+    g.beginPath();                                   // white centre dot
+    g.arc(cx, cyH, r * 0.42, 0, Math.PI * 2);
+    g.fillStyle = "#ffffff";
+    g.fill();
+    return new THREE.CanvasTexture(c);
+  }
+
   // Satellite point cloud (GPU)
   const cloudMat = new THREE.PointsMaterial({
     size: 3.2, map: dotTex, color: 0x4fd1ff,
@@ -667,6 +695,17 @@
   scene.add(followSphere);
   let orbitLine = null;
   let followLabel = null;
+
+  // Observer location marker: a flat map-pin sprite that always faces the camera and
+  // holds a constant on-screen size (see the scale update in animate()).
+  const PIN_ASPECT = 96 / 128;   // canvas width / height
+  const PIN_SCREEN = 0.05;       // apparent-size factor (world size per unit camera distance)
+  const observerMarker = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makePinTexture(), transparent: true, depthTest: true, depthWrite: false
+  }));
+  observerMarker.center.set(0.5, 0);   // anchor at the pin's tip (bottom-centre of the sprite)
+  observerMarker.visible = false;
+  scene.add(observerMarker);
 
   function makeLabel(text) {
     const pad = 12, font = 26, DPR = 4; // render 4× so the texture stays crisp when zoomed in
@@ -742,6 +781,8 @@
   function setObserver(lat, lng, label) {
     observer = { lat, lng, alt: 0 };
     setReadout(`${label}: ${lat.toFixed(3)}°, ${lng.toFixed(3)}°`);
+    observerMarker.position.copy(latLngToVec(lat, lng, R + 0.2));
+    observerMarker.visible = true;
     if (!followed) aimCamera(lat, lng, 300);
     else refreshPass();        // location moved — recompute the next pass
     refreshCloud();
@@ -1445,6 +1486,11 @@
     const tnow = Date.now();
     // Animate the whole cloud client-side at ~5 Hz (smooth at globe scale, no API).
     if (tnow - lastCloud > 200) { lastCloud = tnow; propagateCloud(tnow); }
+
+    if (observerMarker.visible) {
+      const s = camera.position.distanceTo(observerMarker.position) * PIN_SCREEN;
+      observerMarker.scale.set(s * PIN_ASPECT, s, 1);
+    }
 
     if (followed) {
       const now = Date.now();
