@@ -104,18 +104,19 @@ What still costs API calls: switching to a new category or sky radius fetches TL
 - **Keep your key out of git.** Your n2yo key lives only in `.env`, which is already in `.gitignore`, so never commit it. `.env.example` holds a placeholder and nothing else. If your key is ever exposed, rotate it in your [n2yo account](https://www.n2yo.com/api/).
 - Untrusted catalog text (satellite names, transmitter descriptions) is HTML-escaped before it's displayed. The proxy also constrains the upstream parameters (NORAD ids must be numbers; names are sent only as URL-encoded query values) and pins every upstream (n2yo, SatNOGS, JE9PEL, Wikipedia/Wikidata) to a fixed host, so there's no injection or SSRF surface.
 
-### Before publishing to a public repo
+### Checking your key hasn't leaked into git
+
+If you've forked or cloned this repo and are pushing your own changes, it's worth a quick check before each push that your key is still only in `.env`:
 
 ```bash
 # 1. Confirm .env is ignored (should print: .env)
 git check-ignore .env
 
-# 2. Make sure no secret is staged anywhere (should print nothing)
+# 2. Make sure the key isn't staged or committed anywhere (should print nothing)
 git grep -nI "$(grep -E '^N2YO_API_KEY=' .env | cut -d= -f2-)" 2>/dev/null
 
-# 3. Review exactly what will be committed before the first push
+# 3. Review exactly what you're about to commit
 git status
-git add -A && git status   # confirm .env is NOT listed
 ```
 
 If `.env` ever shows up as tracked, remove it (`git rm --cached .env`) and rotate the key at n2yo. Once a secret has been pushed, treat it as compromised even if you delete it afterwards.

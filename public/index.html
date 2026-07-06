@@ -874,8 +874,15 @@
   }
 
   function writePoint(i, lat, lng, altKm) {
-    const v = latLngToVec(lat, lng, R + altKm * KM);
-    cloudPos[i * 3] = v.x; cloudPos[i * 3 + 1] = v.y; cloudPos[i * 3 + 2] = v.z;
+    // Same math as latLngToVec, written straight into the buffer — this runs for every
+    // cloud satellite on every 200ms tick, so skip the per-call Vector3 allocation.
+    const radius = R + altKm * KM;
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lng + 180) * Math.PI / 180;
+    const sinPhi = Math.sin(phi);
+    cloudPos[i * 3]     = -radius * sinPhi * Math.cos(theta);
+    cloudPos[i * 3 + 1] =  radius * Math.cos(phi);
+    cloudPos[i * 3 + 2] =  radius * sinPhi * Math.sin(theta);
   }
 
   function rebuildCloudBuffer() {
@@ -925,21 +932,23 @@
       if (satrecs.has(id)) continue;
       const c = cachedTLE(id);
       if (c) { setSatrec(id, c.l1, c.l2); continue; }
-      if (!tleQueue.includes(id)) tleQueue.push(id);
+      if (!tleQueue.includes(id) && !tleInflight.has(id)) tleQueue.push(id);
     }
     pumpTLE();
   }
+  const tleInflight = new Set();   // ids with a fetch in the air — don't re-queue them
   function pumpTLE() {
     while (tleActive < 6 && tleQueue.length) {
       const id = tleQueue.shift();
       tleActive++;
+      tleInflight.add(id);
       fetch(`/api/tle/${id}`)
         .then(r => r.json())
         .then(d => {
           if (d && d.tle) { const [l1, l2] = d.tle.split(/\r?\n/); storeTLE(id, l1, l2); setSatrec(id, l1, l2); }
         })
         .catch(() => {})
-        .finally(() => { tleActive--; pumpTLE(); });
+        .finally(() => { tleInflight.delete(id); tleActive--; pumpTLE(); });
     }
   }
 
@@ -1102,7 +1111,7 @@
   // =========================================================================
   function propagate(satrec, date) {
     const pv = satellite.propagate(satrec, date);
-    if (!pv.position) return null;
+    if (!pv || !pv.position) return null;   // sgp4 signals failure with a falsy result
     const gmst = satellite.gstime(date);
     const geo = satellite.eciToGeodetic(pv.position, gmst);
     return {
@@ -1305,7 +1314,7 @@
     for (let i = 0; i <= 180; i++) {
       const date = new Date(now + i * step);
       const pv = satellite.propagate(followed.satrec, date);
-      if (!pv.position) continue;
+      if (!pv || !pv.position) continue;   // sgp4 signals failure with a falsy result
       const gmst = groundTrack ? satellite.gstime(date) : fixedGmst; // per-sample vs fixed
       const geo = satellite.eciToGeodetic(pv.position, gmst);
       pts.push(latLngToVec(
@@ -1414,6 +1423,8 @@
     const live = aboveHorizon && rangeRateKms != null;
     const factor = live ? rangeRateKms / C_KMS : 0;   // rᵣ/c
     for (const row of followed.freqRows) {
+      // A re-render replaces the panel's DOM; skip rows whose nodes are now detached.
+      if (row.downNode && !row.downNode.isConnected) continue;
       if (row.downNode) {
         const f = live ? row.downHz * (1 - factor) : row.downHz;
         row.downNode.textContent = fmtMHz(f);
@@ -1581,7 +1592,9 @@
         passHorizon: passHorizonIdx,
         remindLead: getRemindLead()
       }));
-    } catch (e) {}
+    } catch (e) {
+      if (e && e.name === "QuotaExceededError") showToast("Settings not saved — browser storage is full.");
+    }
   }
   function loadSettings() {
     if (!consented()) return;
