@@ -42,7 +42,8 @@ const CACHE_MAX = 500;   // bound memory: distinct request URLs can't grow the c
 async function cachedFetchJSON(url, cacheKey, ttlMs, label, fetchOpts) {
   const hit = cache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.data;
-  const res = await fetch(url, fetchOpts);
+  // 10s cap so a hung upstream can't hang the request with it
+  const res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`${label} responded ${res.status}`);
   const data = await res.json();
   cache.set(cacheKey, { data, expires: Date.now() + ttlMs });
@@ -107,36 +108,46 @@ async function satnogsTransmitters(noradId, name, cacheKey, ttlMs) {
 
 // JE9PEL amateur-satellite frequency list (Mineo Wakita) — a second source,
 // NORAD-keyed, that often covers ham birds SatNOGS lacks. Fetched once, parsed
-// into a Map<norad, rows[]>, and cached for the request TTL.
+// into a Map<norad, rows[]>, and cached for the request TTL. The cache holds the
+// in-flight promise (not the value) so concurrent requests at TTL expiry share one
+// download instead of each re-fetching the whole CSV.
 const JE9PEL_URL = "https://www.ne.jp/asahi/hamradio/je9pel/satslist.csv";
-let je9pelMap = null, je9pelAt = 0;
+let je9pelPromise = null, je9pelAt = 0;
 function je9pelHz(cell) {                          // "435.310" / "436.270/10473.350" / "" -> Hz
   if (!cell) return null;
   const mhz = parseFloat(String(cell).split("/")[0].trim());
   return Number.isFinite(mhz) ? Math.round(mhz * 1e6) : null;
 }
+async function je9pelFetchMap() {
+  const res = await fetch(JE9PEL_URL, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const text = await res.text();
+  const map = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    const c = line.split(";");                 // Name;NORAD;Uplink;Downlink;Beacon;Mode;Callsign;Status
+    if (c.length < 8) continue;
+    const norad = parseInt(c[1], 10);
+    if (!Number.isInteger(norad)) continue;    // skips the header row too
+    if (!map.has(norad)) map.set(norad, []);
+    map.get(norad).push({
+      description: c[0].trim() || "Transmitter",
+      uplink_low: je9pelHz(c[2]), downlink_low: je9pelHz(c[3]), beacon_low: je9pelHz(c[4]),
+      mode: c[5].trim() || null, alive: /active/i.test(c[7]), norad_cat_id: norad, source: "je9pel"
+    });
+  }
+  return map;
+}
 async function je9pelTransmitters(noradId, ttlMs) {
   try {
-    if (!je9pelMap || Date.now() - je9pelAt > ttlMs) {
-      const res = await fetch(JE9PEL_URL);
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const text = await res.text();
-      const map = new Map();
-      for (const line of text.split(/\r?\n/)) {
-        const c = line.split(";");                 // Name;NORAD;Uplink;Downlink;Beacon;Mode;Callsign;Status
-        if (c.length < 8) continue;
-        const norad = parseInt(c[1], 10);
-        if (!Number.isInteger(norad)) continue;    // skips the header row too
-        if (!map.has(norad)) map.set(norad, []);
-        map.get(norad).push({
-          description: c[0].trim() || "Transmitter",
-          uplink_low: je9pelHz(c[2]), downlink_low: je9pelHz(c[3]), beacon_low: je9pelHz(c[4]),
-          mode: c[5].trim() || null, alive: /active/i.test(c[7]), norad_cat_id: norad, source: "je9pel"
-        });
-      }
-      je9pelMap = map; je9pelAt = Date.now();
+    if (!je9pelPromise || Date.now() - je9pelAt > ttlMs) {
+      je9pelAt = Date.now();
+      je9pelPromise = je9pelFetchMap().catch(e => {
+        je9pelPromise = null;                       // failed download isn't cached — retry next request
+        throw e;
+      });
     }
-    return (je9pelMap.get(Number(noradId)) || []).filter(t => t.downlink_low || t.uplink_low || t.beacon_low);
+    const map = await je9pelPromise;
+    return (map.get(Number(noradId)) || []).filter(t => t.downlink_low || t.uplink_low || t.beacon_low);
   } catch (_) {
     return [];                                      // source down → contribute nothing
   }
@@ -344,4 +355,12 @@ await ensureVendor();
 
 server.listen(PORT, () => {
   console.log(`\n  🛰  HAM running at  http://localhost:${PORT}\n`);
+});
+
+// Exit promptly on SIGTERM/SIGINT. As PID 1 in a container, Node gets no default
+// signal handlers, so without this `docker stop` waits its full timeout then SIGKILLs.
+for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => {
+  server.close(() => process.exit(0));
+  server.closeIdleConnections?.();
+  setTimeout(() => process.exit(0), 3000).unref();  // don't let a stuck socket block exit
 });

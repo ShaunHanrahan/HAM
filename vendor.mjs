@@ -28,7 +28,7 @@ export async function ensureVendor() {
   console.log(`  ↓ vendoring ${missing.length} asset(s) locally (first run)…`);
   for (const v of missing) {
     try {
-      const res = await fetch(v.url);
+      const res = await fetch(v.url, { signal: AbortSignal.timeout(15_000) }); // a dead CDN can't hang startup
       if (!res.ok) throw new Error("HTTP " + res.status);
       fs.writeFileSync(path.join(dir, v.file), Buffer.from(await res.arrayBuffer()));
       console.log(`    ✓ ${v.file}`);

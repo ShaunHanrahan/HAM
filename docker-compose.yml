@@ -2,6 +2,7 @@ services:
   ham:
     image: ghcr.io/shaunhanrahan/ham:latest
     container_name: ham
+    init: true
     ports:
       - "10489:10489"
     env_file:
