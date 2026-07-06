@@ -1,5 +1,7 @@
 FROM node:22-alpine
 
+LABEL org.opencontainers.image.source="https://github.com/ShaunHanrahan/HAM"
+
 WORKDIR /app
 
 COPY --chown=node:node package.json server.js vendor.mjs ./

@@ -5,12 +5,19 @@ on:
     branches: [main]
     paths:
       - Dockerfile
+      - .dockerignore
       - docker/**
       - server.js
       - vendor.mjs
       - package.json
       - public/**
+      - .github/workflows/docker-publish.yml
   workflow_dispatch:
+
+# Serialize builds so two quick pushes can't race and leave :latest on the older commit.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: true
 
 jobs:
   build-and-push:
@@ -38,3 +45,5 @@ jobs:
           tags: |
             ghcr.io/shaunhanrahan/ham:latest
             ghcr.io/shaunhanrahan/ham:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
