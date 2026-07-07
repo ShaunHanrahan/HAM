@@ -1,6 +1,6 @@
 # 🛰 HAM: High-Apogee Monitor
 
-An interactive 3D globe that plots live satellites in orbit using the [n2yo API](https://www.n2yo.com/api/). Search for a satellite, jump to it, and follow it while its orbit path is drawn in real time.
+An interactive 3D globe that plots live satellites in orbit using the [n2yo API](https://www.n2yo.com/api/). Search for a satellite, jump to it, and follow it while its orbit path is drawn in real time — on a desktop browser or on your phone.
 
 HAM is meant to run on your own network, for yourself or your household. It's not built to be a shared, multi-user, or public-facing service.
 
@@ -14,6 +14,7 @@ HAM is meant to run on your own network, for yourself or your household. It's no
 - **Broadcast frequencies.** The follow panel lists the satellite's transmitters (downlink, uplink, and beacon frequencies, plus mode), merged from two keyless sources and tagged by origin. One is the [SatNOGS DB](https://db.satnogs.org/), resolved by the satellite's `sat_id` rather than its NORAD id. That's more complete, and it also reaches entries SatNOGS stores without a NORAD id, including a lot of weather and imaging birds. The other is the [JE9PEL amateur-satellite list](https://www.ne.jp/asahi/hamradio/je9pel/). n2yo's own API doesn't expose frequencies, and not every satellite turns up in either source.
 - **About this satellite.** One click in the follow panel pulls up a Wikipedia photo and summary for whatever you're tracking. It's found by matching the NORAD id to Wikidata first, and falling back to a plain name search when there's no direct match.
 - **Favorites and pass reminders.** Star a satellite and pick how many minutes of notice you want, and your browser will notify you shortly before it rises over you. The rise time is worked out on your own device from the orbital elements, and your favorites and reminders live only in your browser's local storage.
+- **Works on phones.** On small screens the sidebar becomes a bottom sheet. Swipe or tap the grabber to expand it, and following a satellite slides its details up automatically. Drag with one finger to rotate the globe, pinch with two to zoom.
 - **n2yo proxy.** A tiny, zero-dependency Node server proxies every n2yo call, so your API key stays off the frontend and CORS is handled for you. Responses are cached briefly to stay within n2yo's rate limits. No `npm install` needed.
 
 ## Setup

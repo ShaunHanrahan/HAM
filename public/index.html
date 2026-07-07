@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
 <title>HAM — Live Satellite Tracker</title>
 <style>
   :root {
@@ -351,6 +351,105 @@
     background: rgba(79,209,255,0.18); border-color: var(--accent-dim); color: var(--accent);
   }
   #consent #consent-accept:hover { background: rgba(79,209,255,0.3); }
+
+  /* Touch: single-finger drag rotates the globe instead of scrolling/pull-to-refresh;
+     also stops the browser eating two-finger pinch (we handle it ourselves). */
+  #globe canvas { touch-action: none; }
+
+  /* Bottom-sheet handle — mobile only; hidden on desktop */
+  #sheet-handle { display: none; }
+
+  /* ============================ MOBILE (≤640px) ============================
+     The left column becomes a bottom sheet: collapsed it peeks --sheet-peek px
+     above the bottom edge; .sheet-open slides it fully up. Everything mobile
+     lives in this block so desktop rendering is untouched. */
+  @media (max-width: 640px) {
+    :root { --sheet-peek: calc(148px + env(safe-area-inset-bottom, 0px)); }
+
+    body { overscroll-behavior: none; }
+
+    #left-col {
+      top: auto; left: 0; right: 0; bottom: 0;
+      width: auto; max-width: none;
+      height: 60vh; height: 60dvh;
+      z-index: 20;                       /* above #camctl (10) when expanded */
+      pointer-events: auto;
+      gap: 0;
+      background: var(--panel);
+      border: 1px solid var(--panel-border); border-bottom: none;
+      border-radius: 16px 16px 0 0;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      transform: translateY(calc(100% - var(--sheet-peek)));
+      transition: transform .28s ease;
+      overscroll-behavior: contain;
+    }
+    #left-col.sheet-open { transform: translateY(0); }
+    /* Freeze inner scroll while collapsed so the peek row can't be scrolled away */
+    #left-col:not(.sheet-open) #panel,
+    #left-col:not(.sheet-open) #info { overflow: hidden; }
+
+    #sheet-handle {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      flex: none; order: 0; width: 100%;
+      padding: 8px 16px 6px; margin: 0;
+      background: none; border: none; color: var(--muted);
+      font: inherit; font-size: 13px; cursor: pointer;
+      touch-action: none;                /* the swipe gesture is ours */
+    }
+    #sheet-handle .grab { width: 42px; height: 4px; border-radius: 999px; background: var(--muted); opacity: .55; }
+    #sheet-label { max-width: 92%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Cards flatten into sheet sections; #info rides above #panel so the
+       followed satellite leads while the sheet is collapsed. */
+    #panel, #info {
+      background: none; border: none; border-radius: 0;
+      box-shadow: none; backdrop-filter: none;
+    }
+    #panel { order: 2; padding: 2px 16px 16px; }
+    #info  { order: 1; margin-top: 0; max-height: 62%; flex: none;
+             overflow-y: auto; padding: 2px 16px 12px;
+             border-bottom: 1px solid var(--panel-border); }
+    #panel h1 { font-size: 17px; }
+
+    /* Touch ergonomics */
+    input[type="text"], select, .remind-lead input { font-size: 16px; }  /* stops iOS focus auto-zoom */
+    .remind-lead input { width: 68px; }
+    #results li { padding: 11px 10px; font-size: 14px; }
+    .hide-header { padding: 9px 0; }
+    .fav-icon-btn { font-size: 16px; padding: 8px; }
+    #results, .freq-list, #info, #panel, #sat-picker, #wiki-card { overscroll-behavior: contain; }
+    #sat-picker .pick-row { padding: 11px 12px; }
+
+    #status {
+      top: max(10px, env(safe-area-inset-top, 0px)); right: 10px;
+      font-size: 11px; padding: 6px 10px;
+      max-width: 62vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* Camera pad: compact — reset + zoom +/− + auto-rotate; d-pad arrows hidden
+       (drag rotates, pinch zooms). Sits above the collapsed sheet; the expanded
+       sheet (z-index 20) slides over it. */
+    #camctl { right: 10px; bottom: calc(var(--sheet-peek) + 12px); padding: 8px; gap: 6px; }
+    .cam-dpad { display: flex; width: 100%; }
+    .cam-dpad .up, .cam-dpad .down, .cam-dpad .left, .cam-dpad .right { display: none; }
+    .cam-dpad .reset { flex: 1; }
+    .cam-row { width: 100%; }
+    .cam-btn { height: 44px; min-width: 44px; }
+    .cam-toggle { font-size: 11px; padding: 8px 6px; }
+
+    /* Consent banner: sits above the collapsed sheet (z-index 70 already wins) */
+    #consent { left: 10px; right: 10px; bottom: calc(var(--sheet-peek) + 10px); font-size: 12px; }
+
+    #wiki-overlay { padding: 12px; }
+    #wiki-card { max-height: 85vh; max-height: 85dvh; }
+    #wiki-close { width: 38px; height: 38px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #left-col { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -359,6 +458,11 @@
   <div id="status">Loading…</div>
 
   <div id="left-col">
+  <!-- Grabber for the mobile bottom sheet (display:none on desktop) -->
+  <button id="sheet-handle" type="button" aria-expanded="false" aria-controls="panel info">
+    <span class="grab" aria-hidden="true"></span>
+    <span id="sheet-label">Search &amp; settings</span>
+  </button>
   <div id="panel">
     <h1>🛰 HAM</h1>
     <div class="sub">High-Apogee Monitor · live satellite tracker</div>
@@ -594,14 +698,58 @@
     return THREE.MathUtils.clamp(r, close ? 15 : 130, close ? 260 : 520);
   }
   const _dom = renderer.domElement;
-  _dom.addEventListener("pointerdown", e => { controls._drag = true; controls._lx = e.clientX; controls._ly = e.clientY; });
-  window.addEventListener("pointerup", () => { controls._drag = false; });
+
+  // Pointer gestures: 1 finger/mouse = rotate, 2 fingers = pinch zoom.
+  const ptrs = new Map();               // pointerId -> {x, y} (canvas pointers only)
+  let pinching = false, pinchD0 = 0, pinchR0 = 0;
+  const pinchDist = () => {
+    const [a, b] = [...ptrs.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+
+  _dom.addEventListener("pointerdown", e => {
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 2) {              // second finger: rotate -> pinch
+      pinching = true;
+      pinchD0 = pinchDist();
+      pinchR0 = controls._r;
+      downXY = null;                    // a pinch is never a click-to-select (declared below; handlers run post-parse)
+    } else if (ptrs.size === 1) {
+      controls._drag = true;            // stays true through a pinch (pauses auto-rotate)
+      controls._lx = e.clientX; controls._ly = e.clientY;
+    }
+  });
+
   window.addEventListener("pointermove", e => {
+    const p = ptrs.get(e.pointerId);
+    if (p) { p.x = e.clientX; p.y = e.clientY; }
+    if (pinching) {                     // zoom by finger-distance ratio from gesture start
+      if (p && ptrs.size === 2 && pinchD0 > 0) {
+        const d = pinchDist();
+        if (d > 0) controls._r = clampR(pinchR0 * (pinchD0 / d));  // spread = zoom in
+      }
+      return;                           // no rotation while two fingers are down
+    }
     if (!controls._drag) return;
     controls._theta -= (e.clientX - controls._lx) * 0.005;
     controls._phi   -= (e.clientY - controls._ly) * 0.005;
     controls._lx = e.clientX; controls._ly = e.clientY;
   });
+
+  function endPointer(e) {
+    if (!ptrs.delete(e.pointerId)) return;      // not a canvas gesture pointer
+    if (pinching && ptrs.size < 2) {
+      pinching = false;
+      if (ptrs.size === 1) {                    // one finger left: hand off to rotate, no jump
+        const [p] = ptrs.values();
+        controls._lx = p.x; controls._ly = p.y;
+      }
+    }
+    if (ptrs.size === 0) controls._drag = false;
+  }
+  window.addEventListener("pointerup", endPointer);
+  window.addEventListener("pointercancel", endPointer);
+
   _dom.addEventListener("wheel", e => {
     e.preventDefault();
     controls._r = clampR(controls._r * (1 + e.deltaY * 0.0012));
@@ -1000,7 +1148,11 @@
     return cands;
   }
 
-  renderer.domElement.addEventListener("pointerdown", e => { downXY = [e.clientX, e.clientY]; });
+  // Registered after the gesture listener above, so `ptrs` already holds this
+  // pointer: only a lone, non-pinching pointer can arm a click-to-select.
+  renderer.domElement.addEventListener("pointerdown", e => {
+    downXY = (ptrs.size === 1 && !pinching) ? [e.clientX, e.clientY] : null;
+  });
   renderer.domElement.addEventListener("pointerup", e => {
     if (!downXY) return;
     const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
@@ -1020,6 +1172,7 @@
   const tip = document.getElementById("sat-tip");
   function hideTip() { tip.style.display = "none"; _dom.style.cursor = ""; }
   renderer.domElement.addEventListener("pointermove", e => {
+    if (e.pointerType === "touch") { hideTip(); return; }   // hover is a mouse concept
     if (controls._drag) { hideTip(); return; }   // rotating the globe, not hovering
     if (pickerOpen) { hideTip(); return; }       // don't fight the open picker
     const cands = pickCandidates(e.clientX, e.clientY);
@@ -1337,12 +1490,17 @@
   const info = document.getElementById("info");
   const freqEl = document.getElementById("i-freq");
   document.getElementById("stop").onclick = stopFollowing;
-  function showInfo() { info.style.display = "block"; }
+  function showInfo() {
+    info.style.display = "block";
+    syncSheetLabel();
+    if (isSheet()) setSheet(true);   // surface the follow card on mobile
+  }
 
   function stopFollowing() {
     followed = null;
     followSphere.visible = false;
     info.style.display = "none";
+    syncSheetLabel();
     if (orbitLine) { scene.remove(orbitLine); orbitLine.geometry.dispose(); orbitLine.material.dispose(); orbitLine = null; }
     if (followLabel) { scene.remove(followLabel); followLabel.material.map.dispose(); followLabel.material.dispose(); followLabel = null; }
     // Return to a globe view and re-enable the auto-rotate toggle.
@@ -1990,6 +2148,48 @@
     } catch (e) {}
     consentBar.style.display = "none";
   };
+
+  // ---- Mobile bottom sheet --------------------------------------------------
+  // On ≤640px screens #left-col is a bottom sheet (see the media query); this
+  // wires up its grabber. On desktop the handle is display:none and none of
+  // these classes are styled, so it's all inert.
+  const sheetMQ  = window.matchMedia("(max-width: 640px)");
+  const leftCol  = document.getElementById("left-col");
+  const sheetBtn = document.getElementById("sheet-handle");
+  const sheetLbl = document.getElementById("sheet-label");
+  const isSheet  = () => sheetMQ.matches;
+
+  function setSheet(open) {
+    leftCol.classList.toggle("sheet-open", open);
+    sheetBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) { document.getElementById("panel").scrollTop = 0; info.scrollTop = 0; }
+  }
+  function syncSheetLabel() {
+    sheetLbl.textContent = followed ? followed.name : "Search & settings";
+  }
+
+  // Tap toggles; a vertical swipe on the handle snaps open/closed.
+  let sheetY0 = null, swallowClick = false;
+  sheetBtn.addEventListener("pointerdown", e => { sheetY0 = e.clientY; });
+  sheetBtn.addEventListener("pointerup", e => {
+    if (sheetY0 == null) return;
+    const dy = e.clientY - sheetY0; sheetY0 = null;
+    if (Math.abs(dy) > 24) {
+      setSheet(dy < 0);                // up = open
+      // Eat only the click generated by THIS swipe — not every browser fires
+      // one after a big swipe, so time the flag out rather than leave it armed.
+      swallowClick = true;
+      setTimeout(() => { swallowClick = false; }, 300);
+    }
+  });
+  sheetBtn.addEventListener("click", () => {                           // taps + keyboard
+    if (swallowClick) { swallowClick = false; return; }
+    setSheet(!leftCol.classList.contains("sheet-open"));
+  });
+
+  // Focusing search while collapsed expands the sheet so results are visible.
+  searchEl.addEventListener("focus", () => { if (isSheet()) setSheet(true); });
+  syncSheetLabel();
 
   loadSettings();    // apply saved prefs (if consented) before the first cloud load
   loadFavorites();   // restore the favorites shortlist (if consented)
