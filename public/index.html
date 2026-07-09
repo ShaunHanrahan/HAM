@@ -848,12 +848,18 @@
   // holds a constant on-screen size (see the scale update in animate()).
   const PIN_ASPECT = 96 / 128;   // canvas width / height
   const PIN_SCREEN = 0.05;       // apparent-size factor (world size per unit camera distance)
+  // depthTest is off because a flat billboard doesn't match the sphere's curvature —
+  // with depth-testing on, the globe's surface clips into the sprite near the limb.
+  // Occlusion on the globe's far side is instead handled by the facing check in animate().
   const observerMarker = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: makePinTexture(), transparent: true, depthTest: true, depthWrite: false
+    map: makePinTexture(), transparent: true, depthTest: false, depthWrite: false
   }));
   observerMarker.center.set(0.5, 0);   // anchor at the pin's tip (bottom-centre of the sprite)
   observerMarker.visible = false;
   scene.add(observerMarker);
+  let observerActive = false;       // true once a location has been chosen
+  const _pinNormal = new THREE.Vector3();
+  const _pinToCam = new THREE.Vector3();
 
   function makeLabel(text) {
     const pad = 12, font = 26, DPR = 4; // render 4× so the texture stays crisp when zoomed in
@@ -931,6 +937,7 @@
     setReadout(`${label}: ${lat.toFixed(3)}°, ${lng.toFixed(3)}°`);
     observerMarker.position.copy(latLngToVec(lat, lng, R + 0.2));
     observerMarker.visible = true;
+    observerActive = true;
     if (!followed) aimCamera(lat, lng, 300);
     else refreshPass();        // location moved — recompute the next pass
     refreshCloud();
@@ -1656,9 +1663,14 @@
     // Animate the whole cloud client-side at ~5 Hz (smooth at globe scale, no API).
     if (tnow - lastCloud > 200) { lastCloud = tnow; propagateCloud(tnow); }
 
-    if (observerMarker.visible) {
-      const s = camera.position.distanceTo(observerMarker.position) * PIN_SCREEN;
-      observerMarker.scale.set(s * PIN_ASPECT, s, 1);
+    if (observerActive) {
+      _pinNormal.copy(observerMarker.position).normalize();
+      _pinToCam.copy(camera.position).sub(observerMarker.position).normalize();
+      observerMarker.visible = _pinNormal.dot(_pinToCam) > 0;
+      if (observerMarker.visible) {
+        const s = camera.position.distanceTo(observerMarker.position) * PIN_SCREEN;
+        observerMarker.scale.set(s * PIN_ASPECT, s, 1);
+      }
     }
 
     if (followed) {
