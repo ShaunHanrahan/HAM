@@ -151,6 +151,8 @@
   .np-look { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   #np-range { flex: 1; accent-color: var(--accent); cursor: pointer; }
   #np-horizon { font-size: 12px; white-space: nowrap; }
+  .np-look.next-pass #np-range { accent-color: var(--follow); }
+  .np-look.next-pass #np-horizon { color: var(--follow); font-weight: 600; }
 
   /* Info card */
   #info {
@@ -542,8 +544,8 @@
       <div><span>Elevation</span><b id="i-el">—</b></div>
     </div>
     <label class="small" style="margin-top:12px;">🛰 Closest pass over you</label>
-    <div class="np-look">
-      <input type="range" id="np-range" min="0" max="5" step="1" value="1" aria-label="Pass look-ahead window" />
+    <div class="np-look" id="np-look">
+      <input type="range" id="np-range" min="0" max="6" step="1" value="2" aria-label="Pass look-ahead window" />
       <span class="muted" id="np-horizon">in the next 24 hrs</span>
     </div>
     <div class="grid" id="i-pass">
@@ -1289,6 +1291,7 @@
   const MIN_ELEV_DEG = 10;
   // How far ahead the next-pass search looks (slider stops).
   const PASS_HORIZONS = [
+    { label: "next pass", ms: 12 * 3600e3 },
     { label: "12 hrs",  ms: 12 * 3600e3 },
     { label: "24 hrs",  ms: 24 * 3600e3 },
     { label: "48 hrs",  ms: 48 * 3600e3 },
@@ -1296,7 +1299,7 @@
     { label: "14 days", ms: 14 * 24 * 3600e3 },
     { label: "28 days", ms: 28 * 24 * 3600e3 }
   ];
-  let passHorizonIdx = 1;   // default = 24 hrs
+  let passHorizonIdx = 2;   // default = 24 hrs
   // Azimuth degrees -> 16-point compass abbreviation (N, NNE, NE, …).
   const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
   const compass = deg => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
@@ -1333,7 +1336,10 @@
   // the smallest slant range while above MIN_ELEV_DEG across ALL passes in the
   // window (not just the first) — that's the peak of the closest pass, so a wider
   // window can surface a better/closer pass. Returns {tMs, rangeKm, elevDeg} or null.
+  // Notch 0 is special-cased to nextSinglePass() — always the very next pass,
+  // regardless of whether a later pass in the window would be closer.
   function nextPass(satrec) {
+    if (passHorizonIdx === 0) return nextSinglePass(satrec);
     const gd = observerGd();
     const start = Date.now();
     const horizonMs = PASS_HORIZONS[passHorizonIdx].ms;
@@ -1391,6 +1397,40 @@
       prevAbove = above;
     }
     return null;
+  }
+
+  // The very next pass, regardless of how close it gets — used for slider notch 0.
+  // Finds the next rise via nextRise(), then the closest-approach point (min slant
+  // range) within just that pass (rise to fall), rather than scanning further out
+  // for a globally closer pass like nextPass() does. Returns {tMs, rangeKm, elevDeg}
+  // or null if there's no rise in the next 24 h (nextRise()'s search window).
+  function nextSinglePass(satrec) {
+    const gd = observerGd();
+    const riseMs = nextRise(satrec);
+    if (riseMs == null) return null;
+    const horizon = riseMs + 30 * 60e3;      // passes are well under 30 min
+    const coarse = 15e3;
+
+    let best = null;
+    for (let t = riseMs; t <= horizon; t += coarse) {
+      const look = lookAt(satrec, gd, new Date(t));
+      if (!look) continue;
+      const elevDeg = look.elevation * 180 / Math.PI;
+      if (elevDeg < MIN_ELEV_DEG) { if (best) break; else continue; }
+      if (!best || look.rangeSat < best.range) best = { t, range: look.rangeSat, elev: elevDeg };
+    }
+    if (!best) return null;
+
+    // Refine: 1s sampling ±coarse around the coarse peak for a tighter time/range.
+    let rt = best.t, rRange = best.range, rElev = best.elev;
+    for (let t = best.t - coarse; t <= best.t + coarse; t += 1000) {
+      if (t < riseMs) continue;
+      const look = lookAt(satrec, gd, new Date(t));
+      if (look && look.rangeSat < rRange) {
+        rRange = look.rangeSat; rt = t; rElev = look.elevation * 180 / Math.PI;
+      }
+    }
+    return { tMs: rt, rangeKm: rRange, elevDeg: rElev };
   }
 
   function refreshPass() {
@@ -1623,7 +1663,9 @@
     const p = followed && followed.pass;
     if (!p) {
       EL.npTime.textContent = followed
-        ? `No pass above 10° in the next ${PASS_HORIZONS[passHorizonIdx].label}`
+        ? (passHorizonIdx === 0
+            ? "No upcoming pass above 10°"
+            : `No pass above 10° in the next ${PASS_HORIZONS[passHorizonIdx].label}`)
         : "—";
       EL.npEta.textContent = EL.npDist.textContent = EL.npElev.textContent = "—";
       return;
@@ -1653,6 +1695,7 @@
     npTime: document.getElementById("np-time"), npEta: document.getElementById("np-eta"),
     npDist: document.getElementById("np-dist"), npElev: document.getElementById("np-elev"),
     npRange: document.getElementById("np-range"), npHorizon: document.getElementById("np-horizon"),
+    npLook: document.getElementById("np-look"),
     lock: document.getElementById("lockcam"), track: document.getElementById("groundtrack")
   };
   let lastInfo = 0, lastOrbit = 0, lastCloud = 0, lastPassRoll = 0;
@@ -2012,14 +2055,23 @@
   renderFavorites();        // initial (empty) render; loadFavorites fills it at boot
 
   // Next-pass look-ahead slider: update the label instantly, debounce the recompute.
+  // Notch 0 ("next pass") isn't a window, so it reads — and is colored — differently
+  // from the rest, which keep their normal styling.
+  function horizonCaption() {
+    return passHorizonIdx === 0 ? "the next pass" : "in the next " + PASS_HORIZONS[passHorizonIdx].label;
+  }
+  function updateHorizonUI() {
+    EL.npHorizon.textContent = horizonCaption();
+    EL.npLook.classList.toggle("next-pass", passHorizonIdx === 0);
+  }
   function applyHorizon() {
     EL.npRange.value = passHorizonIdx;
-    EL.npHorizon.textContent = "in the next " + PASS_HORIZONS[passHorizonIdx].label;
+    updateHorizonUI();
   }
   let horizonTimer = null;
   EL.npRange.addEventListener("input", () => {
     passHorizonIdx = +EL.npRange.value;
-    EL.npHorizon.textContent = "in the next " + PASS_HORIZONS[passHorizonIdx].label;
+    updateHorizonUI();
     clearTimeout(horizonTimer);
     horizonTimer = setTimeout(() => { if (followed) refreshPass(); saveSettings(); }, 250);
   });
