@@ -26,10 +26,15 @@ loadEnv();
 
 const PORT = process.env.PORT || 10489;
 const API_KEY = process.env.N2YO_API_KEY;
-const N2YO_BASE = "https://api.n2yo.com/rest/v1/satellite";
+// Satellite data comes from n2yo.com by default. Set N2YO_BASE to use any
+// n2yo-compatible server instead (e.g. a self-hosted SatTrackAPI instance);
+// no API key is needed then, and n2yo's rate limits stop applying.
+const N2YO_BASE = process.env.N2YO_BASE || "https://api.n2yo.com/rest/v1/satellite";
+const usingN2yo = !process.env.N2YO_BASE;
+const API_LABEL = usingN2yo ? "n2yo" : "satellite API";
 const hasKey = API_KEY && API_KEY !== "PASTE_YOUR_KEY_HERE";
 
-if (!hasKey) {
+if (usingN2yo && !hasKey) {
   console.warn(
     "\n  ⚠  No N2YO_API_KEY set. Copy .env.example to .env and add your key.\n" +
       "     Get a free key at https://www.n2yo.com/api/\n"
@@ -52,7 +57,9 @@ async function cachedFetchJSON(url, cacheKey, ttlMs, label, fetchOpts) {
 }
 
 function n2yo(pathPart, cacheKey, ttlMs) {
-  return cachedFetchJSON(`${N2YO_BASE}/${pathPart}&apiKey=${API_KEY}`, cacheKey, ttlMs, "n2yo");
+  // Only n2yo itself wants the key; a self-hosted backend gets a clean URL.
+  const key = usingN2yo ? `&apiKey=${API_KEY}` : "";
+  return cachedFetchJSON(`${N2YO_BASE}/${pathPart}${key}`, cacheKey, ttlMs, API_LABEL);
 }
 
 // --- transmitter frequencies (merged from several sources, all keyless) ------
@@ -329,7 +336,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (!hasKey) {
+    if (usingN2yo && !hasKey) {
       return sendJSON(res, 503, {
         error: "Server has no N2YO_API_KEY configured. See README."
       });

@@ -74,6 +74,36 @@ All you need is Node 18 or newer.
 
 Either way you run it, the security posture is the same: no built-in auth on the `/api/*` proxy, so keep it on a network you trust rather than exposing it to the wider internet (more on that in Security & deployment below).
 
+### Pointing HAM at your own API server
+
+HAM gets its satellite data from n2yo.com by default, but the backend URL is configurable. If you run an n2yo-compatible server of your own — one that serves the same REST paths and JSON shapes, such as SatTrackAPI, which computes everything locally from CelesTrak orbital data — point HAM at it in your `.env`:
+
+```
+N2YO_BASE=http://sattrackapi:8000/rest/v1/satellite
+```
+
+With your own backend there's no key to register and no rate limits to budget for, so `N2YO_API_KEY` can be left unset. Everything else works exactly as before: frequencies still come from SatNOGS and JE9PEL, summaries from Wikipedia.
+
+If both run under Docker, put them on the same compose network and keep the API container unpublished — HAM reaches it by service name, and nothing else can:
+
+```yaml
+services:
+  ham:
+    image: ghcr.io/shaunhanrahan/ham:latest
+    ports:
+      - "10489:10489"
+    environment:
+      N2YO_BASE: "http://sattrackapi:8000/rest/v1/satellite"
+    restart: unless-stopped
+
+  sattrackapi:
+    build: ./sattrackapi
+    volumes:
+      - ./sattrackapi-data:/data   # orbital-element cache, survives restarts
+    restart: unless-stopped
+    # no ports: -- only reachable from other containers, like ham above
+```
+
 ## How it works
 
 ```
@@ -83,6 +113,8 @@ browser (three.js + satellite.js)
   Node proxy (server.js)  ──►  api.n2yo.com      (positions, TLEs; adds your API key)
                           └──►  db.satnogs.org    (transmitter frequencies; no key)
 ```
+
+(The first arrow goes to whatever `N2YO_BASE` points at — n2yo.com unless you've configured your own server.)
 
 - The overhead view comes from n2yo's `/above` endpoint, where one call returns many satellites.
 - When you follow a satellite, the app fetches its TLE (orbital elements) from n2yo once, then propagates the orbit in your browser with [satellite.js](https://github.com/shashwatak/satellite-js). That gives you a smooth, continuously updating position and a full orbit path without hammering the API.
@@ -96,6 +128,8 @@ n2yo enforces hourly limits per endpoint: above 100/hr, tle 1000/hr, positions 1
 - Only the closest ~150 satellites are plotted (`MAX_SATS` in `index.html`), which caps the one-time TLE fetch.
 
 What still costs API calls: switching to a new category or sky radius fetches TLEs for any satellites you haven't seen before (which are then cached). Normal use stays comfortably under every limit, and you can watch your usage on your n2yo profile page.
+
+None of this applies if HAM is pointed at your own API server (see "Pointing HAM at your own API server" above) — there are no quotas to manage then.
 
 ## Customizing
 
