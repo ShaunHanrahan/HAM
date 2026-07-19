@@ -161,6 +161,13 @@
     backdrop-filter: blur(12px); padding: 14px 16px; display: none;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
   }
+  /* Desktop: while following, the info card leads and the settings drop below it
+     and scroll, so you never scroll past the settings to reach it. Scoped to
+     desktop so it can't fight the mobile bottom-sheet ordering (max-width:640px). */
+  @media (min-width: 641px) {
+    #left-col.following #info  { order: -1; margin-top: 0; flex: 0 1 auto; max-height: 60%; }
+    #left-col.following #panel { flex: 1 1 auto; min-height: 0; }
+  }
   #info .name { font-size: 15px; font-weight: 600; color: var(--follow); display:flex; justify-content:space-between; align-items:center;}
   #info .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 10px; font-size: 13px; }
   #info .grid div span { color: var(--muted); font-size: 11px; display:block; }
@@ -373,7 +380,7 @@
     #left-col {
       top: auto; left: 0; right: 0; bottom: 0;
       width: auto; max-width: none;
-      height: 60vh; height: 60dvh;
+      height: 82vh; height: 82dvh;
       z-index: 20;                       /* above #camctl (10) when expanded */
       pointer-events: auto;
       gap: 0;
@@ -385,18 +392,20 @@
       padding-bottom: env(safe-area-inset-bottom, 0px);
       transform: translateY(calc(100% - var(--sheet-peek)));
       transition: transform .28s ease;
+      overflow-y: auto;                  /* whole sheet scrolls as one region */
       overscroll-behavior: contain;
     }
     #left-col.sheet-open { transform: translateY(0); }
-    /* Freeze inner scroll while collapsed so the peek row can't be scrolled away */
-    #left-col:not(.sheet-open) #panel,
-    #left-col:not(.sheet-open) #info { overflow: hidden; }
+    /* Freeze scroll while collapsed so the peek row can't be scrolled away */
+    #left-col:not(.sheet-open) { overflow: hidden; }
 
     #sheet-handle {
       display: flex; flex-direction: column; align-items: center; gap: 4px;
       flex: none; order: 0; width: 100%;
       padding: 8px 16px 6px; margin: 0;
-      background: none; border: none; color: var(--muted);
+      position: sticky; top: 0; z-index: 1;    /* stays reachable as the body scrolls */
+      background: rgb(14, 20, 34);             /* opaque: hides content scrolling behind it */
+      border: none; color: var(--muted);
       font: inherit; font-size: 13px; cursor: pointer;
       touch-action: none;                /* the swipe gesture is ours */
     }
@@ -409,9 +418,9 @@
       background: none; border: none; border-radius: 0;
       box-shadow: none; backdrop-filter: none;
     }
-    #panel { order: 2; padding: 2px 16px 16px; }
-    #info  { order: 1; margin-top: 0; max-height: 62%; flex: none;
-             overflow-y: auto; padding: 2px 16px 12px;
+    #panel { order: 2; flex: none; padding: 2px 16px 16px; }
+    #info  { order: 1; margin-top: 0; flex: none;
+             padding: 2px 16px 12px;
              border-bottom: 1px solid var(--panel-border); }
     #panel h1 { font-size: 17px; }
 
@@ -701,6 +710,20 @@
   }
   const _dom = renderer.domElement;
 
+  // Drag sensitivity that keeps the surface tracking the finger, so rotation feels
+  // the same at every zoom instead of whipping around when zoomed in. A point at
+  // camera depth d moves dθ·R·H / (2·d·tan(fov/2)) px for a turn dθ, so invert that
+  // for the per-pixel angle. Depth is the distance to the globe's near face (globe
+  // view) or to the pivot (locked on a satellite). Height covers both axes: the
+  // horizontal FOV scales with aspect, so width cancels and one factor fits both.
+  function rotPerPixel() {
+    const H = _dom.clientHeight || innerHeight;
+    const halfFov = camera.fov * Math.PI / 360;       // (fov / 2) in radians
+    const locked = followed && EL.lock.checked;
+    const depth = locked ? controls._r : Math.max(controls._r - R, 1);
+    return 2 * depth * Math.tan(halfFov) / (R * H);
+  }
+
   // Pointer gestures: 1 finger/mouse = rotate, 2 fingers = pinch zoom.
   const ptrs = new Map();               // pointerId -> {x, y} (canvas pointers only)
   let pinching = false, pinchD0 = 0, pinchR0 = 0;
@@ -733,8 +756,9 @@
       return;                           // no rotation while two fingers are down
     }
     if (!controls._drag) return;
-    controls._theta -= (e.clientX - controls._lx) * 0.005;
-    controls._phi   -= (e.clientY - controls._ly) * 0.005;
+    const k = rotPerPixel();
+    controls._theta -= (e.clientX - controls._lx) * k;
+    controls._phi   -= (e.clientY - controls._ly) * k;
     controls._lx = e.clientX; controls._ly = e.clientY;
   });
 
@@ -1539,6 +1563,7 @@
   document.getElementById("stop").onclick = stopFollowing;
   function showInfo() {
     info.style.display = "block";
+    leftCol.classList.add("following");   // desktop: lift the info card above the settings
     syncSheetLabel();
     if (isSheet()) setSheet(true);   // surface the follow card on mobile
   }
@@ -1547,6 +1572,7 @@
     followed = null;
     followSphere.visible = false;
     info.style.display = "none";
+    leftCol.classList.remove("following");
     syncSheetLabel();
     if (orbitLine) { scene.remove(orbitLine); orbitLine.geometry.dispose(); orbitLine.material.dispose(); orbitLine = null; }
     if (followLabel) { scene.remove(followLabel); followLabel.material.map.dispose(); followLabel.material.dispose(); followLabel = null; }
@@ -2226,7 +2252,7 @@
   function setSheet(open) {
     leftCol.classList.toggle("sheet-open", open);
     sheetBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { document.getElementById("panel").scrollTop = 0; info.scrollTop = 0; }
+    if (!open) leftCol.scrollTop = 0;   // the sheet body is one scroll region now
   }
   function syncSheetLabel() {
     sheetLbl.textContent = followed ? followed.name : "Search & settings";
