@@ -710,18 +710,16 @@
   }
   const _dom = renderer.domElement;
 
-  // Drag sensitivity that keeps the surface tracking the finger, so rotation feels
-  // the same at every zoom instead of whipping around when zoomed in. A point at
-  // camera depth d moves dθ·R·H / (2·d·tan(fov/2)) px for a turn dθ, so invert that
-  // for the per-pixel angle. Depth is the distance to the globe's near face (globe
-  // view) or to the pivot (locked on a satellite). Height covers both axes: the
-  // horizontal FOV scales with aspect, so width cancels and one factor fits both.
+  // Drag rotation speed per pixel. At or beyond the mode's default distance it
+  // keeps the sensitivity that already felt right (BASE); zoomed in past that it
+  // eases off in proportion to how close the camera is, so it stops whipping
+  // around up close without crawling either. Tune BASE for overall feel and the
+  // Math.min floor exponent if the close-up end needs more or less bite.
+  const BASE_ROT = 0.005;
   function rotPerPixel() {
-    const H = _dom.clientHeight || innerHeight;
-    const halfFov = camera.fov * Math.PI / 360;       // (fov / 2) in radians
     const locked = followed && EL.lock.checked;
-    const depth = locked ? controls._r : Math.max(controls._r - R, 1);
-    return 2 * depth * Math.tan(halfFov) / (R * H);
+    const ref = locked ? 70 : 300;          // the mode's default camera distance
+    return BASE_ROT * Math.min(1, controls._r / ref);
   }
 
   // Pointer gestures: 1 finger/mouse = rotate, 2 fingers = pinch zoom.
