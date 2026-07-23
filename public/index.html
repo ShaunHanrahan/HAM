@@ -1224,6 +1224,23 @@
   function storeTLE(id, l1, l2) {
     try { localStorage.setItem("tle:" + id, JSON.stringify({ l1, l2, t: Date.now() })); } catch (e) {}
   }
+
+  // ---- Frequency cache ------------------------------------------------------
+  // Same idea as the TLE cache above, but shown instantly and revalidated in the
+  // background rather than trusted outright: SatNOGS/JE9PEL data doesn't go
+  // stale minute to minute, but it does drift over weeks (missions end, new
+  // transmitters get logged), so there's no TTL here — every follow silently
+  // refetches and only repaints if something actually changed.
+  function cachedFreqs(id) {
+    try {
+      const o = JSON.parse(localStorage.getItem("freq:" + id));
+      if (o && Array.isArray(o.list)) return o.list;
+    } catch (e) {}
+    return null;
+  }
+  function storeFreqs(id, list) {
+    try { localStorage.setItem("freq:" + id, JSON.stringify({ list, t: Date.now() })); } catch (e) {}
+  }
   function setSatrec(id, l1, l2) {
     const rec = satellite.twoline2satrec(l1, l2);
     satrecs.set(id, rec);
@@ -1712,8 +1729,18 @@
   // Which source a transmitter row came from (shown as a small tag).
   const srcLabel = s => ({ satnogs: "SatNOGS", je9pel: "JE9PEL" }[s] || s);
   async function loadFrequencies(id) {
-    freqEl.innerHTML = '<span class="muted">Loading frequencies…</span>';
-    if (followed) followed.freqRows = null;   // detach old rows during the fetch
+    // Cache-first: paint what we already have (if anything) immediately, then
+    // silently refetch underneath and only repaint if the answer changed. That
+    // keeps repeat visits to a satellite instant instead of re-showing a
+    // "Loading…" flash every time.
+    const cached = cachedFreqs(id);
+    if (cached) {
+      if (followed) followed.freqRows = null;
+      renderFrequencies(cached);
+    } else {
+      freqEl.innerHTML = '<span class="muted">Loading frequencies…</span>';
+      if (followed) followed.freqRows = null;   // detach old rows during the fetch
+    }
     try {
       // The name enables the server's SatNOGS name fallback (null-NORAD entries).
       const name = followed ? followed.name : "";
@@ -1721,10 +1748,12 @@
       const data = await r.json();
       if (data.error) throw new Error(data.error);
       const list = Array.isArray(data) ? data : (data.results || []);
-      if (!followed || followed.id !== id) return;
-      renderFrequencies(list);   // server already resolved a single satellite's set
+      if (!followed || followed.id !== id) return;   // hopped satellites while this was in flight
+      storeFreqs(id, list);
+      if (!cached || JSON.stringify(cached) !== JSON.stringify(list)) renderFrequencies(list);
     } catch (e) {
-      freqEl.innerHTML = `<span class="muted">Couldn't load frequencies (${escapeHtml(e.message)}).</span>`;
+      if (!cached) freqEl.innerHTML = `<span class="muted">Couldn't load frequencies (${escapeHtml(e.message)}).</span>`;
+      // else: a failed silent refresh just leaves the cached list on screen.
     }
   }
   // Build the transmitter list ONCE, then keep references to each frequency's
