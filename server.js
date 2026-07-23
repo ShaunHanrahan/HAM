@@ -48,7 +48,15 @@ async function cachedFetchJSON(url, cacheKey, ttlMs, label, fetchOpts) {
   const hit = cache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.data;
   // 10s cap so a hung upstream can't hang the request with it
-  const res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(10_000) });
+  let res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(10_000) });
+  if (res.status === 429 || res.status === 503) {
+    // Throttled (Wikimedia especially — one wiki click fans out to several
+    // calls, and bursts trip their limiter). Honor Retry-After up to 2s,
+    // then retry once instead of failing the whole lookup.
+    const after = Math.min(2000, (parseInt(res.headers.get("retry-after"), 10) || 1) * 1000);
+    await new Promise(r => setTimeout(r, after));
+    res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(10_000) });
+  }
   if (!res.ok) throw new Error(`${label} responded ${res.status}`);
   const data = await res.json();
   cache.set(cacheKey, { data, expires: Date.now() + ttlMs });
@@ -176,8 +184,9 @@ function mergeFreqs(primary, ...extra) {
 }
 
 // Satellite pictures + summaries come from Wikipedia via the Wikimedia REST API
-// (no key needed). Wikimedia asks API clients to send a descriptive User-Agent.
-const WIKI_UA = { "User-Agent": "HAM/1.0 (satellite tracker)", "Accept": "application/json" };
+// (no key needed). Wikimedia asks API clients for a User-Agent with a contact
+// URL — compliant clients get a friendlier rate-limit class.
+const WIKI_UA = { "User-Agent": "HAM/1.0 (+https://github.com/ShaunHanrahan/HAM)", "Accept": "application/json" };
 
 // Full-text search returns the closest *text* match, which is often not a
 // spacecraft (a viscount, a railcar…). Only accept a result whose Wikidata
@@ -185,11 +194,22 @@ const WIKI_UA = { "User-Agent": "HAM/1.0 (satellite tracker)", "Accept": "applic
 // (not the title/excerpt) keeps precision high.
 const SAT_RE = /\b(satellites?|spacecraft|space ?stations?|space telescopes?|space observator(?:y|ies)|space probes?|orbiters?|cube ?sats?|nano-?satellites?|small-?sats?|carrier rockets?|launch vehicles?|rocket (?:stage|family|body)|space capsules?|crewed spacecraft)\b/i;
 
+// "NOAA 19" and "NOAA-19" are the same bird: compare titles with case and
+// punctuation stripped so exact matches survive catalog formatting.
+const normTitle = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// Ordered candidates from one search: exact title matches first (trustworthy
+// even when the article has no Wikidata description — the description gate
+// used to throw these away), then anything the description marks as a space
+// object.
 async function wikiSearchSat(query, cacheKey, ttlMs) {
   const url = `https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(query)}&limit=6`;
   const search = await cachedFetchJSON(url, cacheKey, ttlMs, "Wikipedia search", { headers: WIKI_UA });
   const pages = (search && search.pages) || [];
-  return pages.find(p => SAT_RE.test(p.description || "")) || null;
+  const want = normTitle(query);
+  const exact = pages.filter(p => want && normTitle(p.title) === want);
+  const described = pages.filter(p => SAT_RE.test(p.description || ""));
+  return [...new Set([...exact, ...described])];
 }
 
 // Exact lookup: NORAD catalogue number -> English Wikipedia article title, via
@@ -214,26 +234,39 @@ async function wikidataTitleByNorad(noradId, cacheKey, ttlMs) {
 }
 
 async function wikiInfo(name, noradId, cacheKey, ttlMs) {
+  // Resolution steps cache for at most an hour so a transient miss (throttle,
+  // article created yesterday, odd search ranking) isn't frozen for a day;
+  // summaries of *found* pages keep the full TTL — they barely change.
+  const lookupTtl = Math.min(ttlMs, 3_600_000);
+
   // ID-first: an exact Wikidata SATCAT (P377) match, when the satellite has one.
-  let title = noradId ? await wikidataTitleByNorad(noradId, cacheKey, ttlMs) : null;
-  if (!title) {
+  const titles = [];
+  const idTitle = noradId ? await wikidataTitleByNorad(noradId, cacheKey, lookupTtl) : null;
+  if (idTitle) titles.push(idTitle);
+  if (!titles.length) {
     // Fallback — name search. Try the full name first (catches per-satellite
-    // pages like NOAA-19); if no spacecraft result, retry with a simplified name
+    // pages like NOAA-19); if nothing usable, retry with a simplified name
     // (drop parentheticals + the trailing catalogue number, e.g.
     // STARLINK-1234 -> STARLINK) to catch the constellation/program page.
-    let hit = await wikiSearchSat(name, cacheKey + ":s1", ttlMs);
-    if (!hit) {
+    titles.push(...(await wikiSearchSat(name, cacheKey + ":s1", lookupTtl)).map(p => p.key || p.title));
+    if (!titles.length) {
       const simple = name.replace(/\(.*?\)/g, " ").split(/[\s-]*\d/)[0].replace(/[\s\-_/]+$/, "").trim();
       if (simple.length >= 2 && simple.toLowerCase() !== name.toLowerCase())
-        hit = await wikiSearchSat(simple, cacheKey + ":s2", ttlMs);
+        titles.push(...(await wikiSearchSat(simple, cacheKey + ":s2", lookupTtl)).map(p => p.key || p.title));
     }
-    if (!hit) return null;
-    title = hit.key || hit.title;
   }
-  // fetch the chosen page's summary (thumbnail + extract) via the REST summary endpoint
-  const key = encodeURIComponent(title);
-  return cachedFetchJSON(`https://en.wikipedia.org/api/rest_v1/page/summary/${key}`,
-    cacheKey + ":p", ttlMs, "Wikipedia summary", { headers: WIKI_UA });
+  // Walk the candidates instead of betting everything on the first: a title
+  // whose summary is a disambiguation page, has no extract, or 404s just means
+  // we try the next one. Per-title cache key — one key can't serve them all.
+  for (const title of [...new Set(titles)].slice(0, 3)) {
+    try {
+      const sum = await cachedFetchJSON(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+        cacheKey + ":p:" + title, ttlMs, "Wikipedia summary", { headers: WIKI_UA });
+      if (sum && sum.type !== "disambiguation" && sum.extract) return sum;
+    } catch (_) { /* next candidate */ }
+  }
+  return null;
 }
 
 // --- routing ----------------------------------------------------------------
