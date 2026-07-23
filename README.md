@@ -7,6 +7,7 @@ HAM is meant to run on your own network, for yourself or your household. It's no
 ## Features
 
 - **3D globe.** A GPU-rendered three.js globe with earth textures and a star background. Satellites are drawn as a single GPU point cloud, so it stays smooth even with thousands of objects on screen.
+- **Three globe styles.** Buttons next to the camera controls switch between satellite imagery, an atlas-style map with country outlines, and flat land and ocean colors. The map styles are drawn locally from Natural Earth border data at 50m resolution, so they stay sharp when you zoom in and your choice is remembered.
 - **Live overhead view.** Shows what's currently above your location, filtered by category (Starlink, GPS, ISS, amateur radio, and so on). The set refreshes every 5 minutes; in between, each satellite keeps moving because the browser propagates its orbit.
 - **Your spot on the globe.** Once you allow location access or type in coordinates, a map pin marks where you are, so it's clear where the overhead view is centered. The pin stays the same size on screen as you zoom in and out.
 - **Search and jump.** Type a name to filter the overhead satellites, or enter a NORAD ID to track any satellite in the catalog.

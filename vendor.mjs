@@ -14,7 +14,8 @@ export const VENDOR = [
   { file: "satellite.min.js",      url: "https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js" },
   { file: "earth-blue-marble.jpg", url: "https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg" },
   { file: "earth-topology.png",    url: "https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-topology.png" },
-  { file: "night-sky.png",         url: "https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png" }
+  { file: "night-sky.png",         url: "https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png" },
+  { file: "world-countries-50m.json", url: "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json" }
 ];
 
 export async function ensureVendor() {

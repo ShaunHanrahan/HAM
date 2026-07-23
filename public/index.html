@@ -252,13 +252,17 @@
   }
   .cam-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
   .cam-btn:active { background: rgba(79,209,255,0.22); }
+  .cam-btn.active {
+    background: rgba(79,209,255,0.15); border-color: var(--accent-dim); color: var(--accent);
+  }
+  .style-btn { font-size: 11px; }
   .cam-toggle {
     width: 100%; padding: 8px; border-radius: 9px; cursor: pointer; font-size: 12px;
     background: rgba(79,209,255,0.15); border: 1px solid var(--accent-dim); color: var(--accent);
     user-select: none; -webkit-user-select: none;
   }
   .cam-toggle.off { background: rgba(5,9,18,0.7); border-color: var(--panel-border); color: var(--muted); }
-  .cam-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cam-toggle:disabled, .cam-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   #status {
     position: absolute; top: 16px; right: 16px; z-index: 10; font-size: 12px;
@@ -610,6 +614,11 @@
       <button class="cam-btn" data-act="zoomin"  title="Zoom in">＋</button>
     </div>
     <button id="autorotate-btn" class="cam-toggle">⟳ Auto-rotate: on</button>
+    <div class="cam-row" id="globe-style-row" role="group" aria-label="Globe style">
+      <button class="cam-btn style-btn active" data-style="satellite" title="Satellite imagery">Sat</button>
+      <button class="cam-btn style-btn" data-style="outline" title="Outlined countries" disabled>Map</button>
+      <button class="cam-btn style-btn" data-style="flat" title="Flat land &amp; ocean colors" disabled>Flat</button>
+    </div>
   </div>
 
   <!-- Surface any load/runtime error on-screen so it's not a silent "Loading…" -->
@@ -794,6 +803,122 @@
     })
   );
   scene.add(earth);
+
+  // =========================================================================
+  // Globe style: satellite imagery (the default material above), outlined
+  // countries, or flat land/ocean colors. The latter two are drawn once onto a
+  // canvas using the same equirectangular layout as the photo texture (lng/lat
+  // mapped exactly like latLngToVec below uses), so switching styles never
+  // shifts anything plotted against lat/lng.
+  // =========================================================================
+  const SAT_MATERIAL = earth.material;
+  let outlineMaterial = null, flatMaterial = null;
+  let desiredGlobeStyle = "satellite";   // set by loadSettings(); applied once border data is ready
+
+  // Minimal TopoJSON reader — just enough to turn world-atlas's delta-encoded
+  // integer arcs back into [lng,lat] point rings. Avoids pulling in the
+  // topojson-client library for what amounts to a few lines here.
+  function topoArcs(topology) {
+    const { scale, translate } = topology.transform;
+    return topology.arcs.map(arc => {
+      let x = 0, y = 0;
+      return arc.map(([dx, dy]) => {
+        x += dx; y += dy;
+        return [x * scale[0] + translate[0], y * scale[1] + translate[1]];
+      });
+    });
+  }
+  function ringCoords(arcs, ring) {
+    const pts = [];
+    for (const i of ring) {
+      const seg = i < 0 ? arcs[~i].slice().reverse() : arcs[i];
+      pts.push(...(pts.length ? seg.slice(1) : seg));   // arcs share their endpoint
+    }
+    return pts;
+  }
+  // Every ring of every polygon in a Polygon/MultiPolygon geometry.
+  function geometryRings(arcs, geom) {
+    const polys = geom.type === "Polygon" ? [geom.arcs] : geom.type === "MultiPolygon" ? geom.arcs : [];
+    return polys.flatMap(poly => poly.map(ring => ringCoords(arcs, ring)));
+  }
+  function objectRings(arcs, obj) {
+    return obj.geometries.flatMap(g => geometryRings(arcs, g));
+  }
+
+  function buildGlobeStyleMaterials(topology) {
+    const arcs = topoArcs(topology);
+    const landRings = objectRings(arcs, topology.objects.land);
+    const borderRings = topology.objects.countries.geometries.flatMap(g => geometryRings(arcs, g));
+
+    // 8192×4096 on big screens so borders stay sharp when zoomed right in;
+    // 4096 on phones, where two 8192 canvases would cost ~256 MB of RAM for
+    // detail a small screen can't show. Clamped to what the GPU can take.
+    const small = matchMedia("(max-width: 640px)").matches;
+    const W = Math.min(renderer.capabilities.maxTextureSize, small ? 4096 : 8192);
+    const H = W / 2;
+    const toXY = ([lng, lat]) => [(lng + 180) / 360 * W, (90 - lat) / 180 * H];
+    // Rings that cross the antimeridian (Antarctica wraps all the way around;
+    // a few countries like Fiji and Russia touch ±180°) would otherwise draw a
+    // stray line clear across the canvas, since ±180° are adjacent on the globe
+    // but W pixels apart here. Start a new subpath instead of connecting across
+    // any big lng jump.
+    const tracePath = (ctx, rings) => {
+      ctx.beginPath();
+      for (const ring of rings) {
+        let prevX = null;
+        ring.forEach(([lng, lat]) => {
+          const [x, y] = toXY([lng, lat]);
+          ctx[prevX === null || Math.abs(x - prevX) > W / 2 ? "moveTo" : "lineTo"](x, y);
+          prevX = x;
+        });
+        ctx.closePath();
+      }
+    };
+    const makeCanvas = () => {
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      return c;
+    };
+
+    const flatCanvas = makeCanvas();
+    const fctx = flatCanvas.getContext("2d");
+    fctx.fillStyle = "#16324a"; fctx.fillRect(0, 0, W, H);         // ocean
+    fctx.fillStyle = "#4a6b45"; tracePath(fctx, landRings); fctx.fill("evenodd"); // land
+
+    const outlineCanvas = makeCanvas();
+    const octx = outlineCanvas.getContext("2d");
+    octx.fillStyle = "#16324a"; octx.fillRect(0, 0, W, H);          // ocean
+    octx.fillStyle = "#26384a"; tracePath(octx, landRings); octx.fill("evenodd"); // land, close in tone
+    octx.strokeStyle = "rgba(230,237,246,0.85)"; octx.lineWidth = W / 2048; octx.lineJoin = "round";
+    tracePath(octx, borderRings); octx.stroke();                    // country borders
+
+    // Max anisotropy keeps the linework crisp at the sphere's glancing angles,
+    // where default filtering would smear the borders into mush.
+    const makeMat = canvas => {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      return new THREE.MeshBasicMaterial({ map: tex });
+    };
+    flatMaterial = makeMat(flatCanvas);
+    outlineMaterial = makeMat(outlineCanvas);
+  }
+
+  function setGlobeStyle(style) {
+    desiredGlobeStyle = style;
+    earth.material = style === "outline" ? outlineMaterial : style === "flat" ? flatMaterial : SAT_MATERIAL;
+    document.querySelectorAll(".style-btn").forEach(b => b.classList.toggle("active", b.dataset.style === style));
+  }
+  document.querySelectorAll(".style-btn").forEach(btn => {
+    btn.addEventListener("click", () => { setGlobeStyle(btn.dataset.style); saveSettings(); });
+  });
+  fetch(TEX + "world-countries-50m.json")
+    .then(r => r.json())
+    .then(topology => {
+      buildGlobeStyleMaterials(topology);
+      document.querySelectorAll(".style-btn").forEach(b => b.disabled = false);
+      setGlobeStyle(desiredGlobeStyle);
+    })
+    .catch(() => {});   // no border data (e.g. offline first run) — satellite view still works fine
 
   // Stars
   scene.add(new THREE.Mesh(
@@ -1827,7 +1952,8 @@
         lock:     EL.lock.checked,
         groundtrack: EL.track.checked,
         passHorizon: passHorizonIdx,
-        remindLead: getRemindLead()
+        remindLead: getRemindLead(),
+        globeStyle: desiredGlobeStyle
       }));
     } catch (e) {
       if (e && e.name === "QuotaExceededError") showToast("Settings not saved — browser storage is full.");
@@ -1849,6 +1975,7 @@
       passHorizonIdx = s.passHorizon; applyHorizon();
     }
     if (Number.isFinite(s.remindLead)) remindLeadEl.value = clampLead(s.remindLead);
+    if (s.globeStyle === "outline" || s.globeStyle === "flat") desiredGlobeStyle = s.globeStyle;
   }
 
   const scheduleRefresh = () => { clearTimeout(cloudTimer); cloudTimer = setTimeout(refreshCloud, 400); };
